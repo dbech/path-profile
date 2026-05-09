@@ -7,6 +7,7 @@
 
 # testing
 /coverage
+/public/test/
 
 # database
 /prisma/db.sqlite
@@ -20,6 +21,7 @@ next-env.d.ts
 
 # production
 /build
+/dist-electron/
 
 # misc
 .DS_Store

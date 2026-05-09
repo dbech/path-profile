@@ -1,6 +1,36 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+  --font-sans:
+    var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #101418;
+  color: #e6edf3;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.ol-control button {
+  background-color: #16202a;
+  color: #f4f7fb;
+}
+
+.ol-control button:hover,
+.ol-control button:focus {
+  background-color: #243447;
 }

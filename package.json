@@ -3,20 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "dist-electron/main.cjs",
   "scripts": {
-    "build": "next build",
-    "check": "next lint && tsc --noEmit",
+    "build": "cross-env SKIP_ENV_VALIDATION=1 next build",
+    "build:electron": "esbuild electron/main.ts --bundle --platform=node --target=node20 --format=cjs --external:electron --external:gdal-async --outfile=dist-electron/main.cjs && esbuild electron/preload.ts --bundle --platform=node --target=node20 --format=cjs --external:electron --outfile=dist-electron/preload.cjs && esbuild electron/raster-worker.ts --bundle --platform=node --target=node20 --format=cjs --external:gdal-async --outfile=dist-electron/raster-worker.cjs",
+    "check": "bun run typecheck && bun run format:check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "dev": "next dev --turbo",
+    "dev": "bun run dev:web",
+    "dev:desktop": "concurrently -k -n next,electron -c cyan,magenta \"bun run dev:web\" \"wait-on http://localhost:3010 && bun run dev:electron\"",
+    "dev:electron": "bun run build:electron && node scripts/launch-electron.cjs .",
+    "dev:web": "bun run build:electron && cross-env SKIP_ENV_VALIDATION=1 next dev -p 3010",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",
     "format:write": "prettier --write \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",
     "lint": "next lint",
     "lint:fix": "next lint --fix",
     "preview": "next build && next start",
+    "rebuild:native": "bun pm trust gdal-async",
     "start": "next start",
+    "test:unit": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -26,21 +33,34 @@
     "@trpc/client": "^11.0.0",
     "@trpc/react-query": "^11.0.0",
     "@trpc/server": "^11.0.0",
+    "chart.js": "^4.5.1",
     "drizzle-orm": "^0.41.0",
+    "electron": "^42.0.0",
+    "gdal-async": "^3.12.3",
+    "lucide-react": "^1.14.0",
     "next": "^15.2.3",
+    "ol": "^10.9.0",
+    "pngjs": "^7.0.0",
     "react": "^19.0.0",
+    "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.0.0",
     "server-only": "^0.0.1",
     "superjson": "^2.2.1",
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "@eslint/eslintrc": "^3.3.1",
+    "@mapbox/node-pre-gyp": "^2.0.3",
     "@tailwindcss/postcss": "^4.0.15",
     "@types/node": "^20.14.10",
+    "@types/pngjs": "^6.0.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "drizzle-kit": "^0.30.5",
+    "esbuild": "^0.28.0",
     "eslint": "^9.23.0",
     "eslint-config-next": "^15.2.3",
     "eslint-plugin-drizzle": "^0.2.3",
@@ -49,9 +69,14 @@
     "prettier-plugin-tailwindcss": "^0.6.11",
     "tailwindcss": "^4.0.15",
     "typescript": "^5.8.2",
-    "typescript-eslint": "^8.27.0"
+    "typescript-eslint": "^8.27.0",
+    "vitest": "^4.1.5",
+    "wait-on": "^9.0.5"
   },
   "ct3aMetadata": {
     "initVersion": "7.40.0"
-  }
+  },
+  "trustedDependencies": [
+    "gdal-async"
+  ]
 }
