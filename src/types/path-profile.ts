@@ -71,9 +71,13 @@ export type ColorSettings = {
   opacity: number;
 };
 
+export type Unsubscribe = () => void;
+
 export type PathProfileApi = {
   openDsmFiles: () => Promise<string[]>;
   loadDsmProject: (paths: string[]) => Promise<DsmProjectSummary>;
   generateProfile: (request: ProfileRequest) => Promise<ProfileResult>;
   exportProfileCsv: (points: ProfilePoint[]) => Promise<void>;
+  onOpenDsmRequested: (callback: () => void) => Unsubscribe;
+  onExportProfileRequested: (callback: () => void) => Unsubscribe;
 };

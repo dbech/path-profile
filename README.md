@@ -1,29 +1,104 @@
-# Create T3 App
+# Path Profile
 
-This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.
+Path Profile is an Electron desktop app for loading DEM GeoTIFF rasters, drawing a path over the DEM, and generating an elevation profile along that path.
 
-## What's next? How do I make an app with this?
+## Stack
 
-We try to keep this project as simple as possible, so you can start with just the scaffolding we set up for you, and add additional things later when they become necessary.
+- Next.js 15 and React 19 for the renderer
+- Electron for the desktop shell and native file dialogs
+- OpenLayers for DEM map rendering and path drawing
+- `gdal-async` for raster access
+- Chart.js for elevation profile charts
+- Bun for package management and scripts
 
-If you are not familiar with the different technologies used in this project, please refer to the respective docs. If you still are in the wind, please join our [Discord](https://t3.gg/discord) and ask for help.
+## Requirements
 
-- [Next.js](https://nextjs.org)
-- [NextAuth.js](https://next-auth.js.org)
-- [Prisma](https://prisma.io)
-- [Drizzle](https://orm.drizzle.team)
-- [Tailwind CSS](https://tailwindcss.com)
-- [tRPC](https://trpc.io)
+- Bun
+- A development environment that can install and run Electron native dependencies
 
-## Learn More
+If `gdal-async` is blocked during install, run:
 
-To learn more about the [T3 Stack](https://create.t3.gg/), take a look at the following resources:
+```bash
+bun run rebuild:native
+```
 
-- [Documentation](https://create.t3.gg/)
-- [Learn the T3 Stack](https://create.t3.gg/en/faq#what-learning-resources-are-currently-available) — Check out these awesome tutorials
+## Setup
 
-You can check out the [create-t3-app GitHub repository](https://github.com/t3-oss/create-t3-app) — your feedback and contributions are welcome!
+Install dependencies:
 
-## How do I deploy this?
+```bash
+bun install
+```
 
-Follow our deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel), [Netlify](https://create.t3.gg/en/deployment/netlify) and [Docker](https://create.t3.gg/en/deployment/docker) for more information.
+Create a local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Set `DATABASE_URL` in `.env` to a valid URL. For local development, this is enough:
+
+```bash
+DATABASE_URL="file:./db.sqlite"
+```
+
+## Development
+
+Run the desktop app:
+
+```bash
+bun run dev:desktop
+```
+
+This starts the Next.js renderer on port `3010`, builds the Electron entry points, waits for the renderer, and launches Electron.
+
+## Build
+
+Build the Next.js renderer:
+
+```bash
+bun run build
+```
+
+Build the Electron entry points:
+
+```bash
+bun run build:electron
+```
+
+## Checks
+
+Run type checking and format checks:
+
+```bash
+bun run check
+```
+
+Run unit tests:
+
+```bash
+bun run test:unit
+```
+
+Useful individual checks:
+
+```bash
+bun run typecheck
+bun run format:check
+```
+
+## Desktop Usage
+
+1. Start the app with `bun run dev:desktop`.
+2. Use `File > Open DEM...` to select one or more DEM GeoTIFF files.
+3. Use the floating map controls to choose DEM styling, toggle map layers, and start the path tool.
+4. Draw a path over the DEM.
+5. Save the path to generate the elevation profile.
+6. Hover the profile chart or table to inspect the sampled map location.
+7. Use `File > Export Profile CSV` or the CSV button to export profile values.
+
+## Notes
+
+- DEM tiles are served through Electron's `dsm-tile://` protocol in desktop mode.
+- CARTO basemap display is available only for `EPSG:3857` projects.
+- Supported input is GeoTIFF DEM-like raster data.

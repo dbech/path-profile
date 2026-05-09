@@ -35,10 +35,18 @@ type DsmMapProps = {
   colorSettings: ColorSettings;
   showBasemap: boolean;
   drawingEnabled: boolean;
+  pathEditEnabled: boolean;
   finishDrawingRequest: number;
   clearPathRequest: number;
+  restorePathRequest: number;
+  pathToRestore: { coordinates: Coordinate[]; projection: string | null };
   activePoint: ProfilePoint | null;
-  onDraftPathChange: (coordinates: Coordinate[], projection: string) => void;
+  onDraftPathChange: (
+    coordinates: Coordinate[],
+    projection: string,
+    changeType: "draw" | "modify",
+  ) => void;
+  onPathContextMenu: (position: { x: number; y: number }) => void;
 };
 
 const lineStyle = new Style({
@@ -62,10 +70,14 @@ export function DsmMap({
   colorSettings,
   showBasemap,
   drawingEnabled,
+  pathEditEnabled,
   finishDrawingRequest,
   clearPathRequest,
+  restorePathRequest,
+  pathToRestore,
   activePoint,
   onDraftPathChange,
+  onPathContextMenu,
 }: DsmMapProps) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<Map | null>(null);
@@ -78,6 +90,8 @@ export function DsmMap({
   const modifyRef = useRef<Modify | null>(null);
   const snapRef = useRef<Snap | null>(null);
   const onDraftPathChangeRef = useRef(onDraftPathChange);
+  const onPathContextMenuRef = useRef(onPathContextMenu);
+  const lastRestorePathRequestRef = useRef(0);
 
   const projectionCode = useMemo(() => {
     if (!project) return "EPSG:3857";
@@ -125,6 +139,10 @@ export function DsmMap({
   }, [onDraftPathChange]);
 
   useEffect(() => {
+    onPathContextMenuRef.current = onPathContextMenu;
+  }, [onPathContextMenu]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !project) return;
 
@@ -150,7 +168,11 @@ export function DsmMap({
     basemapLayerRef.current = basemapLayer;
     map.getLayers().insertAt(0, basemapLayer);
 
-    const resolutions = dsmTileResolutions(project.extent, project.pixelSize);
+    const dsmResolutions = dsmTileResolutions(
+      project.extent,
+      project.pixelSize,
+    );
+    const resolutions = zoomOutResolutions(dsmResolutions);
     const projection = getProjection(projectionCode) ?? projectionCode;
     const view = new View({
       projection,
@@ -159,7 +181,7 @@ export function DsmMap({
         (project.extent.minX + project.extent.maxX) / 2,
         (project.extent.minY + project.extent.maxY) / 2,
       ],
-      zoom: 0,
+      zoom: resolutions.length > dsmResolutions.length ? 2 : 0,
       extent: [
         project.extent.minX,
         project.extent.minY,
@@ -190,9 +212,11 @@ export function DsmMap({
     draw.on("drawend", (event) => {
       const geometry = event.feature.getGeometry();
       if (geometry instanceof LineString) {
+        event.feature.set("path", true);
         onDraftPathChangeRef.current(
           geometry.getCoordinates() as Coordinate[],
           projectionCode,
+          "draw",
         );
       }
     });
@@ -206,6 +230,7 @@ export function DsmMap({
         onDraftPathChangeRef.current(
           geometry.getCoordinates() as Coordinate[],
           projectionCode,
+          "modify",
         );
       }
     });
@@ -224,9 +249,9 @@ export function DsmMap({
 
   useEffect(() => {
     drawRef.current?.setActive(drawingEnabled);
-    snapRef.current?.setActive(drawingEnabled);
-    modifyRef.current?.setActive(!drawingEnabled);
-  }, [drawingEnabled]);
+    snapRef.current?.setActive(drawingEnabled || pathEditEnabled);
+    modifyRef.current?.setActive(pathEditEnabled && !drawingEnabled);
+  }, [drawingEnabled, pathEditEnabled]);
 
   useEffect(() => {
     if (finishDrawingRequest === 0) return;
@@ -245,6 +270,43 @@ export function DsmMap({
     pathSourceRef.current.clear();
     markerSourceRef.current.clear();
   }, [clearPathRequest]);
+
+  useEffect(() => {
+    if (restorePathRequest === 0) return;
+    if (lastRestorePathRequestRef.current === restorePathRequest) return;
+    lastRestorePathRequestRef.current = restorePathRequest;
+    pathSourceRef.current.clear();
+    markerSourceRef.current.clear();
+    if (pathToRestore.coordinates.length < 2) return;
+    pathSourceRef.current.addFeature(
+      createPathFeature(pathToRestore.coordinates),
+    );
+  }, [pathToRestore, restorePathRequest]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const element = map?.getViewport();
+    if (!map || !element) return;
+
+    const handleContextMenu = (event: MouseEvent) => {
+      const pixel = map.getEventPixel(event);
+      let pathHit = false;
+      map.forEachFeatureAtPixel(pixel, (feature) => {
+        if (feature.get("path") === true) {
+          pathHit = true;
+          return true;
+        }
+        return undefined;
+      });
+
+      if (!pathHit) return;
+      event.preventDefault();
+      onPathContextMenuRef.current({ x: event.clientX, y: event.clientY });
+    };
+
+    element.addEventListener("contextmenu", handleContextMenu);
+    return () => element.removeEventListener("contextmenu", handleContextMenu);
+  }, [project]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -311,12 +373,8 @@ function createDsmLayer(
     resolutions,
     tileSize: 256,
   });
-  const min = colorSettings.autoStretch
-    ? project.elevation.min
-    : colorSettings.min;
-  const max = colorSettings.autoStretch
-    ? project.elevation.max
-    : colorSettings.max;
+  const min = project.elevation.min;
+  const max = project.elevation.max;
   const source = new XYZ({
     crossOrigin: "anonymous",
     projection: project.extent.projection,
@@ -347,6 +405,19 @@ function createDsmLayer(
     source,
     opacity: colorSettings.opacity,
     zIndex: 10,
+  });
+}
+
+function zoomOutResolutions(resolutions: number[]): number[] {
+  const baseResolution = resolutions[0];
+  if (!baseResolution) return resolutions;
+  return [baseResolution * 4, baseResolution * 2, ...resolutions];
+}
+
+function createPathFeature(coordinates: Coordinate[]): Feature<LineString> {
+  return new Feature({
+    geometry: new LineString(coordinates),
+    path: true,
   });
 }
 

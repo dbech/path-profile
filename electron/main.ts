@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { RasterWorkerClient } from "./raster-worker-client";
@@ -68,6 +68,7 @@ async function createWindow(): Promise<void> {
 
 async function bootstrap(): Promise<void> {
   await app.whenReady();
+  createApplicationMenu();
 
   protocol.handle("dsm-tile", async (request) => {
     try {
@@ -90,15 +91,64 @@ async function bootstrap(): Promise<void> {
   await createWindow();
 }
 
+function createApplicationMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "Open DEM...",
+          accelerator: "CommandOrControl+O",
+          click: () => sendFocusedWindow("path-profile:menu-open-dsm"),
+        },
+        {
+          label: "Export Profile CSV",
+          accelerator: "CommandOrControl+S",
+          click: () => sendFocusedWindow("path-profile:menu-export-profile"),
+        },
+        { type: "separator" },
+        { role: process.platform === "darwin" ? "close" : "quit" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [{ role: "reload" }, { role: "toggleDevTools" }],
+    },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "About Path Profile",
+          click: async () => {
+            await dialog.showMessageBox({
+              type: "info",
+              title: "About Path Profile",
+              message: "Path Profile",
+              detail: "Desktop DEM path profile analysis.",
+            });
+          },
+        },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function sendFocusedWindow(channel: string): void {
+  const window = BrowserWindow.getFocusedWindow();
+  window?.webContents.send(channel);
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle("path-profile:open-dsm-files", async (event) => {
     assertTrustedSender(event);
     const result = await dialog.showOpenDialog({
-      title: "Open DSM GeoTIFF files",
+      title: "Open DEM GeoTIFF files",
       properties: ["openFile", "multiSelections"],
       filters: [
         {
-          name: "GeoTIFF DSM",
+          name: "GeoTIFF DEM",
           extensions: ["tif", "tiff", "geotiff", "gtif"],
         },
         { name: "All files", extensions: ["*"] },
@@ -116,7 +166,7 @@ function registerIpcHandlers(): void {
         !Array.isArray(paths) ||
         !paths.every((item) => typeof item === "string")
       ) {
-        throw new Error("Invalid DSM path list.");
+        throw new Error("Invalid DEM path list.");
       }
       return rasterWorker.loadDsmProject(paths);
     },
