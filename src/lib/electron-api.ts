@@ -54,6 +54,8 @@ const browserTestApi: PathProfileApi = {
     anchor.click();
     URL.revokeObjectURL(url);
   },
+  onOpenDsmRequested: () => () => undefined,
+  onExportProfileRequested: () => () => undefined,
 };
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {

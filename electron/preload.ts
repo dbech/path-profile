@@ -25,6 +25,16 @@ const api: PathProfileApi = {
       "path-profile:export-profile-csv",
       points,
     ) as Promise<void>,
+  onOpenDsmRequested: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("path-profile:menu-open-dsm", listener);
+    return () => ipcRenderer.off("path-profile:menu-open-dsm", listener);
+  },
+  onExportProfileRequested: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("path-profile:menu-export-profile", listener);
+    return () => ipcRenderer.off("path-profile:menu-export-profile", listener);
+  },
 };
 
 contextBridge.exposeInMainWorld("pathProfile", api);

@@ -30,9 +30,11 @@ type ProfileChartProps = {
 };
 
 export function ProfileChart({ points, onHoverPoint }: ProfileChartProps) {
+  const theme = getThemeColors();
+
   if (points.length === 0) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center text-sm text-[#8fa1b3]">
+      <div className="flex h-full min-h-0 items-center justify-center text-sm text-[var(--text-muted)]">
         No profile
       </div>
     );
@@ -47,8 +49,8 @@ export function ProfileChart({ points, onHoverPoint }: ProfileChartProps) {
           x: point.distance,
           y: point.elevation,
         })),
-        borderColor: "#25c2a0",
-        backgroundColor: "rgba(37, 194, 160, 0.16)",
+        borderColor: theme.chartLine,
+        backgroundColor: theme.chartFill,
         borderWidth: 2,
         pointRadius: points.length > 300 ? 0 : 1.8,
         pointHoverRadius: 4,
@@ -86,20 +88,20 @@ export function ProfileChart({ points, onHoverPoint }: ProfileChartProps) {
         type: "linear",
         min: 0,
         max: lastDistance,
-        grid: { color: "rgba(143, 161, 179, 0.18)" },
-        ticks: { color: "#b6c4d2", maxTicksLimit: 6 },
+        grid: { color: theme.grid },
+        ticks: { color: theme.textSecondary, maxTicksLimit: 6 },
         title: {
-          color: "#b6c4d2",
+          color: theme.textSecondary,
           display: true,
           text: "Distance",
         },
       },
       y: {
         type: "linear",
-        grid: { color: "rgba(143, 161, 179, 0.18)" },
-        ticks: { color: "#b6c4d2", maxTicksLimit: 6 },
+        grid: { color: theme.grid },
+        ticks: { color: theme.textSecondary, maxTicksLimit: 6 },
         title: {
-          color: "#b6c4d2",
+          color: theme.textSecondary,
           display: true,
           text: "Elevation",
         },
@@ -125,4 +127,23 @@ export function ProfileChart({ points, onHoverPoint }: ProfileChartProps) {
 
 function formatNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
+}
+
+function getThemeColors() {
+  if (typeof window === "undefined") {
+    return {
+      chartLine: "#25c2a0",
+      chartFill: "rgba(37, 194, 160, 0.16)",
+      grid: "rgba(143, 161, 179, 0.18)",
+      textSecondary: "#b6c4d2",
+    };
+  }
+
+  const styles = getComputedStyle(document.documentElement);
+  return {
+    chartLine: styles.getPropertyValue("--chart-line").trim(),
+    chartFill: styles.getPropertyValue("--chart-fill").trim(),
+    grid: "rgba(143, 161, 179, 0.18)",
+    textSecondary: styles.getPropertyValue("--text-secondary").trim(),
+  };
 }

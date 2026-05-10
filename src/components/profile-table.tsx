@@ -15,20 +15,20 @@ export function ProfileTable({ points, onHoverPoint }: ProfileTableProps) {
   const visiblePoints = points.length > 600 ? downsample(points, 600) : points;
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
+    <div className="themed-scrollbar min-h-0 flex-1 overflow-auto">
       <table className="w-full table-fixed border-collapse text-left text-xs">
-        <thead className="sticky top-0 bg-[#151d26] text-[#b6c4d2]">
+        <thead className="sticky top-0 bg-[var(--panel-bg)] text-[var(--text-secondary)]">
           <tr>
-            <th className="w-[25%] border-b border-[#25313d] px-3 py-2 font-medium">
+            <th className="w-[25%] border-b border-[var(--panel-border)] px-3 py-2 font-medium">
               Distance
             </th>
-            <th className="w-[25%] border-b border-[#25313d] px-3 py-2 font-medium">
+            <th className="w-[25%] border-b border-[var(--panel-border)] px-3 py-2 font-medium">
               Elevation
             </th>
-            <th className="w-[25%] border-b border-[#25313d] px-3 py-2 font-medium">
+            <th className="w-[25%] border-b border-[var(--panel-border)] px-3 py-2 font-medium">
               X
             </th>
-            <th className="w-[25%] border-b border-[#25313d] px-3 py-2 font-medium">
+            <th className="w-[25%] border-b border-[var(--panel-border)] px-3 py-2 font-medium">
               Y
             </th>
           </tr>
@@ -37,7 +37,7 @@ export function ProfileTable({ points, onHoverPoint }: ProfileTableProps) {
           {visiblePoints.map((point, index) => (
             <tr
               key={`${point.distance}-${index}`}
-              className="cursor-default border-b border-[#1e2933] text-[#d8e1ea] hover:bg-[#1a2733]"
+              className="cursor-default border-b border-[var(--panel-border)] text-[var(--text-primary)] hover:bg-[var(--control-bg-hover)]"
               onMouseEnter={() => onHoverPoint(point)}
               onMouseLeave={() => onHoverPoint(null)}
             >
