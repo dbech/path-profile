@@ -91,14 +91,20 @@ bun run format:check
 
 1. Start the app with `bun run dev:desktop`.
 2. Use `File > Open DEM...` to select one or more DEM GeoTIFF files.
-3. Use the floating map controls to choose DEM styling, toggle map layers, and start the path tool.
-4. Draw a path over the DEM.
-5. Save the path to generate the elevation profile.
-6. Hover the profile chart or table to inspect the sampled map location.
-7. Use `File > Export Profile CSV` or the CSV button to export profile values.
+3. Use the floating map controls to choose DEM styling and start the path tool.
+4. Use `View > Basemap` to choose the background basemap.
+5. Draw a path over the DEM.
+6. Save the path to generate the elevation profile.
+7. Hover the profile chart or table to inspect the sampled map location.
+8. Use `File > Export Profile CSV` or the CSV button to export profile values.
 
 ## Notes
 
 - DEM tiles are served through Electron's `dsm-tile://` protocol in desktop mode.
-- CARTO basemap display is available only for `EPSG:3857` projects.
+- Free, no-key basemaps are rendered from Web Mercator tile services and
+  reprojected by OpenLayers when a transform is available for the DEM CRS.
+- Public basemap services are for interactive viewing only; the app does not
+  bulk download or package basemap tiles for offline use.
+- Some basemaps have provider caveats: OSM/Wikimedia public tiles are fair-use
+  services, and Esri layers are public ArcGIS tile services.
 - Supported input is GeoTIFF DEM-like raster data.

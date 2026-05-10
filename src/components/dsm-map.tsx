@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import Feature from "ol/Feature";
 import Map from "ol/Map";
 import View from "ol/View";
@@ -10,10 +10,15 @@ import Modify from "ol/interaction/Modify";
 import Snap from "ol/interaction/Snap";
 import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
+import { Minus, Plus } from "lucide-react";
 import LineString from "ol/geom/LineString";
 import Point from "ol/geom/Point";
 import Projection from "ol/proj/Projection";
-import { addProjection, get as getProjection } from "ol/proj";
+import {
+  addProjection,
+  get as getProjection,
+  getTransformFromProjections,
+} from "ol/proj";
 import VectorSource from "ol/source/Vector";
 import XYZ from "ol/source/XYZ";
 import Fill from "ol/style/Fill";
@@ -21,8 +26,10 @@ import CircleStyle from "ol/style/Circle";
 import Stroke from "ol/style/Stroke";
 import Style from "ol/style/Style";
 import TileGrid from "ol/tilegrid/TileGrid";
+import { type BasemapId, getBasemap } from "~/lib/basemaps";
 import type {
   ColorSettings,
+  ColorPalette,
   Coordinate,
   DsmProjectSummary,
   ProfilePoint,
@@ -33,7 +40,7 @@ import { dsmTileResolutions } from "~/lib/tile-grid";
 type DsmMapProps = {
   project: DsmProjectSummary | null;
   colorSettings: ColorSettings;
-  showBasemap: boolean;
+  selectedBasemap: BasemapId;
   drawingEnabled: boolean;
   pathEditEnabled: boolean;
   finishDrawingRequest: number;
@@ -47,6 +54,11 @@ type DsmMapProps = {
     changeType: "draw" | "modify",
   ) => void;
   onPathContextMenu: (position: { x: number; y: number }) => void;
+};
+
+type DsmRenderSettings = {
+  palette: ColorPalette;
+  reverse: boolean;
 };
 
 const lineStyle = new Style({
@@ -65,10 +77,12 @@ const markerStyle = new Style({
   }),
 });
 
+const basemapProjectionCode = "EPSG:3857";
+
 export function DsmMap({
   project,
   colorSettings,
-  showBasemap,
+  selectedBasemap,
   drawingEnabled,
   pathEditEnabled,
   finishDrawingRequest,
@@ -98,6 +112,17 @@ export function DsmMap({
     return project.extent.projection;
   }, [project]);
 
+  const zoomBy = useCallback((delta: number) => {
+    const view = mapRef.current?.getView();
+    if (!view) return;
+    const zoom = view.getZoom();
+    if (zoom === undefined) return;
+    view.animate({
+      duration: 160,
+      zoom: zoom + delta,
+    });
+  }, []);
+
   useEffect(() => {
     if (!mapElementRef.current || mapRef.current) return;
 
@@ -114,9 +139,14 @@ export function DsmMap({
     });
     const map = new Map({
       target: mapElementRef.current,
-      controls: defaultControls({ attribution: false, rotate: false }),
+      controls: defaultControls({
+        attribution: false,
+        rotate: false,
+        zoom: false,
+      }),
       layers: [pathLayer, markerLayer],
       view: new View({
+        projection: basemapProjectionCode,
         center: [0, 0],
         zoom: 2,
       }),
@@ -161,12 +191,10 @@ export function DsmMap({
     dsmLayerRef.current = dsmLayer;
     map.getLayers().insertAt(0, dsmLayer);
 
-    const basemapLayer = createBasemapLayer();
     if (basemapLayerRef.current) {
       map.removeLayer(basemapLayerRef.current);
+      basemapLayerRef.current = null;
     }
-    basemapLayerRef.current = basemapLayer;
-    map.getLayers().insertAt(0, basemapLayer);
 
     const dsmResolutions = dsmTileResolutions(
       project.extent,
@@ -188,6 +216,7 @@ export function DsmMap({
         project.extent.maxX,
         project.extent.maxY,
       ],
+      showFullExtent: true,
     });
     map.setView(view);
     view.fit(
@@ -312,18 +341,41 @@ export function DsmMap({
     const map = mapRef.current;
     if (!map || !project || !dsmLayerRef.current) return;
 
-    const nextLayer = createDsmLayer(project, colorSettings);
+    const nextLayer = createDsmLayer(project, {
+      palette: colorSettings.palette,
+      reverse: colorSettings.reverse,
+    });
     const layers = map.getLayers();
     const currentIndex = layers.getArray().indexOf(dsmLayerRef.current);
     layers.setAt(Math.max(0, currentIndex), nextLayer);
     dsmLayerRef.current = nextLayer;
-  }, [project, colorSettings]);
+    nextLayer.setOpacity(colorSettingsRef.current.opacity);
+  }, [project, colorSettings.palette, colorSettings.reverse]);
 
   useEffect(() => {
-    const basemapLayer = basemapLayerRef.current;
-    if (!basemapLayer || !project) return;
-    basemapLayer.setVisible(showBasemap && project.epsg === "EPSG:3857");
-  }, [project, showBasemap]);
+    dsmLayerRef.current?.setOpacity(colorSettings.opacity);
+  }, [colorSettings.opacity]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (basemapLayerRef.current) {
+      map.removeLayer(basemapLayerRef.current);
+      basemapLayerRef.current = null;
+    }
+
+    if (
+      selectedBasemap === "none" ||
+      !hasBasemapTransform(project?.extent.projection)
+    ) {
+      return;
+    }
+
+    const basemapLayer = createBasemapLayer(selectedBasemap);
+    basemapLayerRef.current = basemapLayer;
+    map.getLayers().insertAt(0, basemapLayer);
+  }, [project, selectedBasemap]);
 
   useEffect(() => {
     markerSourceRef.current.clear();
@@ -336,7 +388,31 @@ export function DsmMap({
     );
   }, [activePoint]);
 
-  return <div ref={mapElementRef} className="h-full w-full" />;
+  return (
+    <>
+      <div ref={mapElementRef} className="h-full w-full" />
+      <div className="absolute top-4 right-4 z-10 flex overflow-hidden rounded border border-[var(--overlay-border)] bg-[var(--overlay-bg)] text-[var(--text-primary)] shadow-sm backdrop-blur">
+        <button
+          aria-label="Zoom in"
+          className="flex h-12 w-12 items-center justify-center border-r border-[var(--overlay-border)] text-xl leading-none hover:bg-[var(--control-bg-hover)]"
+          title="Zoom in"
+          type="button"
+          onClick={() => zoomBy(1)}
+        >
+          <Plus aria-hidden="true" className="h-5 w-5" />
+        </button>
+        <button
+          aria-label="Zoom out"
+          className="flex h-12 w-12 items-center justify-center text-xl leading-none hover:bg-[var(--control-bg-hover)]"
+          title="Zoom out"
+          type="button"
+          onClick={() => zoomBy(-1)}
+        >
+          <Minus aria-hidden="true" className="h-5 w-5" />
+        </button>
+      </div>
+    </>
+  );
 }
 
 function registerProjectProjection(project: DsmProjectSummary): void {
@@ -357,9 +433,21 @@ function registerProjectProjection(project: DsmProjectSummary): void {
   );
 }
 
+function hasBasemapTransform(viewProjectionCode: string | undefined): boolean {
+  if (!viewProjectionCode) return true;
+
+  const basemapProjection = getProjection(basemapProjectionCode);
+  const viewProjection = getProjection(viewProjectionCode);
+  if (!basemapProjection || !viewProjection) return false;
+
+  return (
+    getTransformFromProjections(basemapProjection, viewProjection) !== null
+  );
+}
+
 function createDsmLayer(
   project: DsmProjectSummary,
-  colorSettings: ColorSettings,
+  colorSettings: DsmRenderSettings,
 ): TileLayer<XYZ> {
   const resolutions = dsmTileResolutions(project.extent, project.pixelSize);
   const tileGrid = new TileGrid({
@@ -403,7 +491,6 @@ function createDsmLayer(
 
   return new TileLayer({
     source,
-    opacity: colorSettings.opacity,
     zIndex: 10,
   });
 }
@@ -411,7 +498,14 @@ function createDsmLayer(
 function zoomOutResolutions(resolutions: number[]): number[] {
   const baseResolution = resolutions[0];
   if (!baseResolution) return resolutions;
-  return [baseResolution * 4, baseResolution * 2, ...resolutions];
+  return [
+    baseResolution * 32,
+    baseResolution * 16,
+    baseResolution * 8,
+    baseResolution * 4,
+    baseResolution * 2,
+    ...resolutions,
+  ];
 }
 
 function createPathFeature(coordinates: Coordinate[]): Feature<LineString> {
@@ -421,14 +515,30 @@ function createPathFeature(coordinates: Coordinate[]): Feature<LineString> {
   });
 }
 
-function createBasemapLayer(): TileLayer<XYZ> {
+function createBasemapLayer(basemapId: BasemapId): TileLayer<XYZ> {
+  const basemap = getBasemap(basemapId);
+  const source = new XYZ({
+    attributions: basemap.attribution,
+    crossOrigin: "anonymous",
+    maxZoom: basemap.maxZoom,
+    projection: basemapProjectionCode,
+    tileUrlFunction: (tileCoord) => {
+      if (!tileCoord || basemap.source === "none") return "";
+
+      const [z, x, y] = tileCoord;
+      if (basemap.source === "arcgis") {
+        return `${basemap.url}/tile/${z}/${y}/${x}`;
+      }
+
+      return basemap.url
+        .replace("{z}", String(z))
+        .replace("{x}", String(x))
+        .replace("{y}", String(y));
+    },
+  });
+
   return new TileLayer({
-    source: new XYZ({
-      attributions: "© OpenStreetMap contributors © CARTO",
-      crossOrigin: "anonymous",
-      url: "https://{1-4}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-    }),
-    visible: false,
+    source,
     zIndex: 0,
   });
 }

@@ -1,3 +1,4 @@
+import { defaultBasemap } from "~/lib/basemaps";
 import type { PathProfileApi } from "~/types/path-profile";
 
 const testDsmToken = "__PUBLIC_TEST_DSM__";
@@ -18,6 +19,7 @@ export function hasDesktopBridge(): boolean {
 }
 
 const browserTestApi: PathProfileApi = {
+  getSelectedBasemap: async () => defaultBasemap,
   openDsmFiles: async () => [testDsmToken],
   loadDsmProject: async (paths) => {
     const response = await fetch("/api/dsm/project", {
@@ -56,6 +58,7 @@ const browserTestApi: PathProfileApi = {
   },
   onOpenDsmRequested: () => () => undefined,
   onExportProfileRequested: () => () => undefined,
+  onBasemapSelected: () => () => undefined,
 };
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {

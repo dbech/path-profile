@@ -1,3 +1,5 @@
+import type { BasemapId } from "~/lib/basemaps";
+
 export type Coordinate = [number, number];
 
 export type Extent = {
@@ -74,10 +76,12 @@ export type ColorSettings = {
 export type Unsubscribe = () => void;
 
 export type PathProfileApi = {
+  getSelectedBasemap: () => Promise<BasemapId>;
   openDsmFiles: () => Promise<string[]>;
   loadDsmProject: (paths: string[]) => Promise<DsmProjectSummary>;
   generateProfile: (request: ProfileRequest) => Promise<ProfileResult>;
   exportProfileCsv: (points: ProfilePoint[]) => Promise<void>;
   onOpenDsmRequested: (callback: () => void) => Unsubscribe;
   onExportProfileRequested: (callback: () => void) => Unsubscribe;
+  onBasemapSelected: (callback: (basemapId: BasemapId) => void) => Unsubscribe;
 };

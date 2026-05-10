@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { BasemapId } from "../src/lib/basemaps";
 import type {
   DsmProjectSummary,
   PathProfileApi,
@@ -8,6 +9,10 @@ import type {
 } from "../src/types/path-profile";
 
 const api: PathProfileApi = {
+  getSelectedBasemap: () =>
+    ipcRenderer.invoke(
+      "path-profile:get-selected-basemap",
+    ) as Promise<BasemapId>,
   openDsmFiles: () =>
     ipcRenderer.invoke("path-profile:open-dsm-files") as Promise<string[]>,
   loadDsmProject: (paths: string[]) =>
@@ -34,6 +39,14 @@ const api: PathProfileApi = {
     const listener = () => callback();
     ipcRenderer.on("path-profile:menu-export-profile", listener);
     return () => ipcRenderer.off("path-profile:menu-export-profile", listener);
+  },
+  onBasemapSelected: (callback) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      basemapId: BasemapId,
+    ) => callback(basemapId);
+    ipcRenderer.on("path-profile:menu-select-basemap", listener);
+    return () => ipcRenderer.off("path-profile:menu-select-basemap", listener);
   },
 };
 
