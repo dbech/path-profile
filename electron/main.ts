@@ -4,12 +4,14 @@ import path from "node:path";
 import { RasterWorkerClient } from "./raster-worker-client";
 import { profilePointsToCsv } from "./raster/csv";
 import { parseTileUrl } from "./raster/tile-renderer";
+import { basemaps, type BasemapId } from "../src/lib/basemaps";
 import type { ProfilePoint, ProfileRequest } from "../src/types/path-profile";
 
 const devServerUrl =
   process.env.PATH_PROFILE_DEV_SERVER_URL ?? "http://localhost:3010";
 const preloadPath = path.join(__dirname, "preload.cjs");
 const rasterWorker = new RasterWorkerClient();
+const defaultBasemap: BasemapId = "osm-standard";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -63,7 +65,48 @@ async function createWindow(): Promise<void> {
     return { action: "deny" };
   });
 
-  await window.loadURL(devServerUrl);
+  try {
+    await waitForRenderer(devServerUrl);
+    await window.loadURL(devServerUrl);
+  } catch (error) {
+    const detail = errorMessage(error);
+    await dialog.showMessageBox(window, {
+      type: "error",
+      title: "Renderer unavailable",
+      message: "Path Profile could not connect to the renderer.",
+      detail: `${detail}\n\nStart the app with bun run dev:desktop, or make sure the Next.js renderer is running on ${devServerUrl}.`,
+    });
+  }
+}
+
+async function waitForRenderer(url: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(1_000),
+      });
+      if (response.ok) return;
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = errorMessage(error);
+    }
+
+    await delay(500);
+  }
+
+  throw new Error(`${url} did not become available. ${lastError}`);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function bootstrap(): Promise<void> {
@@ -112,7 +155,21 @@ function createApplicationMenu(): void {
     },
     {
       label: "View",
-      submenu: [{ role: "reload" }, { role: "toggleDevTools" }],
+      submenu: [
+        {
+          label: "Basemap",
+          submenu: basemaps.map((basemap) => ({
+            label: basemap.label,
+            type: "radio",
+            checked: basemap.id === defaultBasemap,
+            click: () =>
+              sendFocusedWindow("path-profile:menu-select-basemap", basemap.id),
+          })),
+        },
+        { type: "separator" },
+        { role: "reload" },
+        { role: "toggleDevTools" },
+      ],
     },
     {
       label: "Help",
@@ -135,9 +192,9 @@ function createApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function sendFocusedWindow(channel: string): void {
+function sendFocusedWindow(channel: string, ...args: unknown[]): void {
   const window = BrowserWindow.getFocusedWindow();
-  window?.webContents.send(channel);
+  window?.webContents.send(channel, ...args);
 }
 
 function registerIpcHandlers(): void {

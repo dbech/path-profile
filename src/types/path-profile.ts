@@ -1,3 +1,5 @@
+import type { BasemapId } from "~/lib/basemaps";
+
 export type Coordinate = [number, number];
 
 export type Extent = {
@@ -80,4 +82,5 @@ export type PathProfileApi = {
   exportProfileCsv: (points: ProfilePoint[]) => Promise<void>;
   onOpenDsmRequested: (callback: () => void) => Unsubscribe;
   onExportProfileRequested: (callback: () => void) => Unsubscribe;
+  onBasemapSelected: (callback: (basemapId: BasemapId) => void) => Unsubscribe;
 };

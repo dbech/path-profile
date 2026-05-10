@@ -56,6 +56,7 @@ const browserTestApi: PathProfileApi = {
   },
   onOpenDsmRequested: () => () => undefined,
   onExportProfileRequested: () => () => undefined,
+  onBasemapSelected: () => () => undefined,
 };
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {

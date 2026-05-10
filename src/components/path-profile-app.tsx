@@ -6,7 +6,6 @@ import {
   Download,
   Edit3,
   FileWarning,
-  Layers,
   Loader2,
   Map as MapIcon,
   PencilLine,
@@ -17,6 +16,7 @@ import {
 import { DsmMap } from "~/components/dsm-map";
 import { ProfileChart } from "~/components/profile-chart";
 import { ProfileTable } from "~/components/profile-table";
+import type { BasemapId } from "~/lib/basemaps";
 import { getPathProfileApi, hasDesktopBridge } from "~/lib/electron-api";
 import type {
   ColorPalette,
@@ -86,7 +86,8 @@ export function PathProfileApp() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("Idle");
   const [busy, setBusy] = useState(false);
-  const [showBasemap, setShowBasemap] = useState(false);
+  const [selectedBasemap, setSelectedBasemap] =
+    useState<BasemapId>("osm-standard");
   const [openPopover, setOpenPopover] = useState<PopoverName>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [pathContextPosition, setPathContextPosition] = useState<{
@@ -113,6 +114,11 @@ export function PathProfileApp() {
       samples: profilePoints.length,
     };
   }, [profilePoints]);
+
+  const noticeMessages = useMemo(
+    () => (project ? warnings : ["Open a DEM from File > Open DEM..."]),
+    [project, warnings],
+  );
 
   const currentPathSnapshot = useCallback((): PathSnapshot => {
     if (!draftProjection || draftPath.length < 2) return null;
@@ -199,7 +205,6 @@ export function PathProfileApp() {
       setDrawingEnabled(false);
       setPathEditEnabled(false);
       setClearPathRequest((request) => request + 1);
-      setShowBasemap(false);
       pathHistoryRef.current = [];
       setOpenPopover(null);
       setColorSettings({
@@ -354,10 +359,14 @@ export function PathProfileApp() {
     const unsubscribeExport = api.onExportProfileRequested(() => {
       void handleExport();
     });
+    const unsubscribeBasemap = api.onBasemapSelected((basemapId) => {
+      setSelectedBasemap(basemapId);
+    });
 
     return () => {
       unsubscribeOpen();
       unsubscribeExport();
+      unsubscribeBasemap();
     };
   }, [handleExport, handleOpen]);
 
@@ -424,7 +433,6 @@ export function PathProfileApp() {
   const activePalette = palettes.find(
     (palette) => palette.value === colorSettings.palette,
   );
-
   return (
     <main className="grid h-screen grid-cols-[minmax(520px,1fr)_420px] grid-rows-[minmax(0,1fr)_260px] bg-[var(--app-bg)] text-[var(--text-primary)]">
       <section className="relative col-start-1 row-start-1 min-w-0 overflow-hidden">
@@ -438,18 +446,10 @@ export function PathProfileApp() {
           pathToRestore={pathToRestore}
           project={project}
           restorePathRequest={restorePathRequest}
-          showBasemap={showBasemap}
+          selectedBasemap={selectedBasemap}
           onDraftPathChange={handleDraftPathChange}
           onPathContextMenu={handlePathContextMenu}
         />
-
-        {!project ? (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[var(--map-empty-bg)]">
-            <div className="border border-[var(--overlay-border)] bg-[var(--overlay-bg)] px-5 py-4 text-sm text-[var(--text-secondary)] shadow-sm backdrop-blur">
-              Open a DEM from File &gt; Open DEM...
-            </div>
-          </div>
-        ) : null}
 
         <div className="absolute top-4 right-4 left-4 flex items-start gap-2">
           <div className="flex h-12 max-w-[420px] items-center gap-2 rounded border border-[var(--overlay-border)] bg-[var(--overlay-bg)] px-3 text-xs text-[var(--text-secondary)] shadow-sm backdrop-blur">
@@ -626,9 +626,7 @@ export function PathProfileApp() {
                     onChange={(event) =>
                       setColorSettings({
                         ...colorSettings,
-                        autoStretch: true,
                         opacity: Number(event.target.value),
-                        reverse: false,
                       })
                     }
                   />
@@ -636,42 +634,6 @@ export function PathProfileApp() {
               </div>
             ) : null}
           </div>
-        </div>
-
-        <div className="absolute bottom-4 left-4 grid w-40 gap-2 rounded border border-[var(--overlay-border)] bg-[var(--overlay-bg)] px-3 py-3 text-xs text-[var(--text-secondary)] shadow-sm backdrop-blur">
-          <div className="flex items-center gap-2 font-medium text-[var(--text-primary)]">
-            <Layers
-              aria-hidden="true"
-              className="h-4 w-4 text-[var(--accent)]"
-            />
-            Layers
-          </div>
-          <label className="grid grid-cols-[1fr_auto] items-center gap-2">
-            <span>DEM</span>
-            <input
-              checked
-              className="h-4 w-4 accent-[var(--accent)]"
-              disabled
-              type="checkbox"
-            />
-          </label>
-          <label
-            className="grid grid-cols-[1fr_auto] items-center gap-2"
-            title={
-              project?.epsg === "EPSG:3857"
-                ? "CARTO"
-                : "CARTO requires EPSG:3857"
-            }
-          >
-            <span>CARTO</span>
-            <input
-              checked={showBasemap}
-              className="h-4 w-4 accent-[var(--accent)]"
-              disabled={project?.epsg !== "EPSG:3857"}
-              type="checkbox"
-              onChange={(event) => setShowBasemap(event.target.checked)}
-            />
-          </label>
         </div>
 
         {project || draftPath.length >= 2 || profileStats ? (
@@ -714,7 +676,7 @@ export function PathProfileApp() {
           </div>
         ) : null}
 
-        {warnings.length > 0 || error ? (
+        {noticeMessages.length > 0 || error ? (
           <div className="absolute bottom-4 left-1/2 grid w-max max-w-[calc(100%-2rem)] -translate-x-1/2 gap-2 rounded border border-[var(--overlay-border)] bg-[var(--overlay-bg)] px-3 py-2 text-xs text-[var(--text-secondary)] shadow-sm backdrop-blur">
             {error ? (
               <div className="flex items-start gap-2 text-[var(--danger)]">
@@ -725,13 +687,13 @@ export function PathProfileApp() {
                 <p>{error}</p>
               </div>
             ) : null}
-            {warnings.map((warning) => (
-              <div key={warning} className="flex items-start gap-2">
+            {noticeMessages.map((message) => (
+              <div key={message} className="flex items-start gap-2">
                 <FileWarning
                   aria-hidden="true"
                   className="mt-0.5 h-4 w-4 shrink-0 text-[var(--warning)]"
                 />
-                <p>{warning}</p>
+                <p>{message}</p>
               </div>
             ))}
           </div>
