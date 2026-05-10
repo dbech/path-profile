@@ -16,6 +16,8 @@ export type BasemapDefinition = {
   caveat?: string;
 };
 
+export const defaultBasemap: BasemapId = "osm-standard";
+
 export const basemaps: BasemapDefinition[] = [
   {
     id: "none",

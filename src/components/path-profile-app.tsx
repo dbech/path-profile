@@ -16,7 +16,7 @@ import {
 import { DsmMap } from "~/components/dsm-map";
 import { ProfileChart } from "~/components/profile-chart";
 import { ProfileTable } from "~/components/profile-table";
-import type { BasemapId } from "~/lib/basemaps";
+import { defaultBasemap, type BasemapId } from "~/lib/basemaps";
 import { getPathProfileApi, hasDesktopBridge } from "~/lib/electron-api";
 import type {
   ColorPalette,
@@ -87,7 +87,7 @@ export function PathProfileApp() {
   const [status, setStatus] = useState<string>("Idle");
   const [busy, setBusy] = useState(false);
   const [selectedBasemap, setSelectedBasemap] =
-    useState<BasemapId>("osm-standard");
+    useState<BasemapId>(defaultBasemap);
   const [openPopover, setOpenPopover] = useState<PopoverName>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [pathContextPosition, setPathContextPosition] = useState<{
@@ -352,6 +352,8 @@ export function PathProfileApp() {
   useEffect(() => {
     const api = getPathProfileApi();
     if (!api || !hasDesktopBridge()) return;
+
+    void api.getSelectedBasemap().then(setSelectedBasemap);
 
     const unsubscribeOpen = api.onOpenDsmRequested(() => {
       void handleOpen();

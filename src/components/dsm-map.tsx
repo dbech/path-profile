@@ -14,7 +14,11 @@ import { Minus, Plus } from "lucide-react";
 import LineString from "ol/geom/LineString";
 import Point from "ol/geom/Point";
 import Projection from "ol/proj/Projection";
-import { addProjection, get as getProjection } from "ol/proj";
+import {
+  addProjection,
+  get as getProjection,
+  getTransformFromProjections,
+} from "ol/proj";
 import VectorSource from "ol/source/Vector";
 import XYZ from "ol/source/XYZ";
 import Fill from "ol/style/Fill";
@@ -72,6 +76,8 @@ const markerStyle = new Style({
     stroke: new Stroke({ color: "#ffffff", width: 2 }),
   }),
 });
+
+const basemapProjectionCode = "EPSG:3857";
 
 export function DsmMap({
   project,
@@ -140,7 +146,7 @@ export function DsmMap({
       }),
       layers: [pathLayer, markerLayer],
       view: new View({
-        projection: "EPSG:3857",
+        projection: basemapProjectionCode,
         center: [0, 0],
         zoom: 2,
       }),
@@ -359,7 +365,10 @@ export function DsmMap({
       basemapLayerRef.current = null;
     }
 
-    if (selectedBasemap === "none") {
+    if (
+      selectedBasemap === "none" ||
+      !hasBasemapTransform(project?.extent.projection)
+    ) {
       return;
     }
 
@@ -421,6 +430,18 @@ function registerProjectProjection(project: DsmProjectSummary): void {
       global: false,
       units: project.epsg === "EPSG:4326" ? "degrees" : "m",
     }),
+  );
+}
+
+function hasBasemapTransform(viewProjectionCode: string | undefined): boolean {
+  if (!viewProjectionCode) return true;
+
+  const basemapProjection = getProjection(basemapProjectionCode);
+  const viewProjection = getProjection(viewProjectionCode);
+  if (!basemapProjection || !viewProjection) return false;
+
+  return (
+    getTransformFromProjections(basemapProjection, viewProjection) !== null
   );
 }
 
@@ -500,7 +521,7 @@ function createBasemapLayer(basemapId: BasemapId): TileLayer<XYZ> {
     attributions: basemap.attribution,
     crossOrigin: "anonymous",
     maxZoom: basemap.maxZoom,
-    projection: "EPSG:3857",
+    projection: basemapProjectionCode,
     tileUrlFunction: (tileCoord) => {
       if (!tileCoord || basemap.source === "none") return "";
 

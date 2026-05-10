@@ -9,6 +9,10 @@ import type {
 } from "../src/types/path-profile";
 
 const api: PathProfileApi = {
+  getSelectedBasemap: () =>
+    ipcRenderer.invoke(
+      "path-profile:get-selected-basemap",
+    ) as Promise<BasemapId>,
   openDsmFiles: () =>
     ipcRenderer.invoke("path-profile:open-dsm-files") as Promise<string[]>,
   loadDsmProject: (paths: string[]) =>

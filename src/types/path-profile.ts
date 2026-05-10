@@ -76,6 +76,7 @@ export type ColorSettings = {
 export type Unsubscribe = () => void;
 
 export type PathProfileApi = {
+  getSelectedBasemap: () => Promise<BasemapId>;
   openDsmFiles: () => Promise<string[]>;
   loadDsmProject: (paths: string[]) => Promise<DsmProjectSummary>;
   generateProfile: (request: ProfileRequest) => Promise<ProfileResult>;
