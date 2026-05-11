@@ -34,7 +34,6 @@ import type {
   DsmProjectSummary,
   ProfilePoint,
 } from "~/types/path-profile";
-import { hasDesktopBridge } from "~/lib/electron-api";
 import { dsmTileResolutions } from "~/lib/tile-grid";
 
 type DsmMapProps = {
@@ -53,6 +52,7 @@ type DsmMapProps = {
     projection: string,
     changeType: "draw" | "modify",
   ) => void;
+  onFinishDrawingFailed: () => void;
   onPathContextMenu: (position: { x: number; y: number }) => void;
 };
 
@@ -91,6 +91,7 @@ export function DsmMap({
   pathToRestore,
   activePoint,
   onDraftPathChange,
+  onFinishDrawingFailed,
   onPathContextMenu,
 }: DsmMapProps) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
@@ -104,6 +105,7 @@ export function DsmMap({
   const modifyRef = useRef<Modify | null>(null);
   const snapRef = useRef<Snap | null>(null);
   const onDraftPathChangeRef = useRef(onDraftPathChange);
+  const onFinishDrawingFailedRef = useRef(onFinishDrawingFailed);
   const onPathContextMenuRef = useRef(onPathContextMenu);
   const lastRestorePathRequestRef = useRef(0);
 
@@ -167,6 +169,10 @@ export function DsmMap({
   useEffect(() => {
     onDraftPathChangeRef.current = onDraftPathChange;
   }, [onDraftPathChange]);
+
+  useEffect(() => {
+    onFinishDrawingFailedRef.current = onFinishDrawingFailed;
+  }, [onFinishDrawingFailed]);
 
   useEffect(() => {
     onPathContextMenuRef.current = onPathContextMenu;
@@ -291,6 +297,7 @@ export function DsmMap({
       draw.finishDrawing();
     } catch {
       // OpenLayers throws if there are not enough points to finish the sketch.
+      onFinishDrawingFailedRef.current();
     }
   }, [finishDrawingRequest]);
 
@@ -471,21 +478,12 @@ function createDsmLayer(
       if (!tileCoord) return "";
       const [z, x, y] = tileCoord;
       const search = new URLSearchParams({
-        projectId: project.id,
         palette: colorSettings.palette,
         min: String(min),
         max: String(max),
         reverse: String(colorSettings.reverse),
       });
-      if (hasDesktopBridge()) {
-        search.delete("projectId");
-        return `dsm-tile://tile/${project.id}/${z}/${x}/${y}.png?${search.toString()}`;
-      }
-
-      search.set("z", String(z));
-      search.set("x", String(x));
-      search.set("y", String(y));
-      return `/api/dsm/tile?${search.toString()}`;
+      return `dsm-tile://tile/${project.id}/${z}/${x}/${y}.png?${search.toString()}`;
     },
   });
 

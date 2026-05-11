@@ -73,12 +73,6 @@ export function extentsOverlap(a: Extent, b: Extent): boolean {
   );
 }
 
-export function extentContains(extent: Extent, x: number, y: number): boolean {
-  return (
-    x >= extent.minX && x < extent.maxX && y > extent.minY && y <= extent.maxY
-  );
-}
-
 export function worldToPixelCorner(
   geoTransform: GeoTransform,
   x: number,

@@ -45,7 +45,7 @@ export async function renderDsmTile(request: DsmTileRequest): Promise<Buffer> {
 
     for (let col = 0; col < tileSize; col++) {
       const worldX = extent.minX + (col + 0.5) * resolution;
-      const sample = sampleNearest(reversedFiles, worldX, worldY);
+      const sample = sampleNearestForTile(reversedFiles, worldX, worldY);
       const offset = (row * tileSize + col) * 4;
 
       if (sample === null) {
@@ -100,7 +100,11 @@ export function parseTileUrl(url: string): DsmTileRequest {
   };
 }
 
-function sampleNearest(files: DsmFile[], x: number, y: number): number | null {
+export function sampleNearestForTile(
+  files: DsmFile[],
+  x: number,
+  y: number,
+): number | null {
   for (const file of files) {
     if (
       x < file.extent.minX ||
@@ -126,7 +130,7 @@ function sampleNearest(files: DsmFile[], x: number, y: number): number | null {
 
     const value = file.band.pixels.get(nearestX, nearestY);
     if (!Number.isFinite(value) || isNoData(value, file.nodata)) {
-      return null;
+      continue;
     }
 
     return value;
@@ -146,8 +150,12 @@ function emptyPng(): Buffer {
 }
 
 function parseInteger(value: string, label: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed)) {
+  if (!/^-?\d+$/.test(value)) {
+    throw new Error(`Invalid DSM tile ${label} coordinate.`);
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
     throw new Error(`Invalid DSM tile ${label} coordinate.`);
   }
   return parsed;

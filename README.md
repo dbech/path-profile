@@ -30,18 +30,6 @@ Install dependencies:
 bun install
 ```
 
-Create a local environment file:
-
-```bash
-cp .env.example .env
-```
-
-Set `DATABASE_URL` in `.env` to a valid URL. For local development, this is enough:
-
-```bash
-DATABASE_URL="file:./db.sqlite"
-```
-
 ## Development
 
 Run the desktop app:
@@ -54,10 +42,10 @@ This starts the Next.js renderer on port `3010`, builds the Electron entry point
 
 ## Build
 
-Build the Next.js renderer:
+Build the static Next.js renderer:
 
 ```bash
-bun run build
+bun run build:renderer
 ```
 
 Build the Electron entry points:
@@ -65,6 +53,36 @@ Build the Electron entry points:
 ```bash
 bun run build:electron
 ```
+
+Build both desktop targets:
+
+```bash
+bun run build:desktop
+```
+
+## Release
+
+Create an unpacked Windows x64 app directory for smoke testing:
+
+```bash
+bun run dist:win:dir
+```
+
+Create the unsigned Windows x64 installer:
+
+```bash
+bun run dist:win
+```
+
+Release artifacts are written to `dist/`. Run `Path-Profile-Setup-0.1.0-win-x64.exe` to install the app, then launch `Path Profile` from the desktop or Start menu shortcut. The packaged app loads the exported renderer from the bundle and does not require a Next.js server or port `3010`.
+
+To create a portable folder zip instead:
+
+```bash
+bun run dist:win:zip
+```
+
+Extract the zip and run `Path Profile.exe`.
 
 ## Checks
 
@@ -101,6 +119,7 @@ bun run format:check
 ## Notes
 
 - DEM tiles are served through Electron's `dsm-tile://` protocol in desktop mode.
+- Browser mode and the T3 sample API/database scaffold are not part of this desktop release.
 - Free, no-key basemaps are rendered from Web Mercator tile services and
   reprojected by OpenLayers when a transform is available for the DEM CRS.
 - Public basemap services are for interactive viewing only; the app does not

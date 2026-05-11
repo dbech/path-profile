@@ -18,6 +18,7 @@ import { ProfileChart } from "~/components/profile-chart";
 import { ProfileTable } from "~/components/profile-table";
 import { defaultBasemap, type BasemapId } from "~/lib/basemaps";
 import { getPathProfileApi, hasDesktopBridge } from "~/lib/electron-api";
+import { exportProfileStatus } from "~/lib/export-profile-status";
 import type {
   ColorPalette,
   ColorSettings,
@@ -232,8 +233,8 @@ export function PathProfileApp() {
     setStatus("Exporting CSV");
 
     try {
-      await api.exportProfileCsv(profilePoints);
-      setStatus("CSV exported");
+      const exported = await api.exportProfileCsv(profilePoints);
+      setStatus(exportProfileStatus(exported));
     } catch (exportError) {
       setError(errorMessage(exportError));
       setStatus("Export failed");
@@ -310,6 +311,11 @@ export function PathProfileApp() {
     drawingEnabled,
     generateProfileForPath,
   ]);
+
+  const handleFinishDrawingFailed = useCallback(() => {
+    pendingGenerateAfterFinishRef.current = false;
+    setStatus("Draw at least two points");
+  }, []);
 
   const handleCancelPath = useCallback(() => {
     const previousSnapshot = currentPathSnapshot();
@@ -450,6 +456,7 @@ export function PathProfileApp() {
           restorePathRequest={restorePathRequest}
           selectedBasemap={selectedBasemap}
           onDraftPathChange={handleDraftPathChange}
+          onFinishDrawingFailed={handleFinishDrawingFailed}
           onPathContextMenu={handlePathContextMenu}
         />
 
@@ -681,19 +688,16 @@ export function PathProfileApp() {
         {noticeMessages.length > 0 || error ? (
           <div className="absolute bottom-4 left-1/2 grid w-max max-w-[calc(100%-2rem)] -translate-x-1/2 gap-2 rounded border border-[var(--overlay-border)] bg-[var(--overlay-bg)] px-3 py-2 text-xs text-[var(--text-secondary)] shadow-sm backdrop-blur">
             {error ? (
-              <div className="flex items-start gap-2 text-[var(--danger)]">
-                <FileWarning
-                  aria-hidden="true"
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                />
+              <div className="flex items-center gap-2 text-[var(--danger)]">
+                <FileWarning aria-hidden="true" className="h-4 w-4 shrink-0" />
                 <p>{error}</p>
               </div>
             ) : null}
             {noticeMessages.map((message) => (
-              <div key={message} className="flex items-start gap-2">
+              <div key={message} className="flex items-center gap-2">
                 <FileWarning
                   aria-hidden="true"
-                  className="mt-0.5 h-4 w-4 shrink-0 text-[var(--warning)]"
+                  className="h-4 w-4 shrink-0 text-[var(--warning)]"
                 />
                 <p>{message}</p>
               </div>
