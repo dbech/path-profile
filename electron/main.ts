@@ -10,10 +10,27 @@ import type { ProfilePoint, ProfileRequest } from "../src/types/path-profile";
 const devServerUrl =
   process.env.PATH_PROFILE_DEV_SERVER_URL ?? "http://localhost:3010";
 const preloadPath = path.join(__dirname, "preload.cjs");
-const rasterWorker = new RasterWorkerClient();
+const rasterWorker = new RasterWorkerClient({
+  env: app.isPackaged ? { NODE_PATH: packagedNodeModulesPath() } : undefined,
+  runtime: app.isPackaged
+    ? packagedNodeRuntimePath()
+    : (process.env.PATH_PROFILE_NODE_RUNTIME ?? "node"),
+  workerPath: app.isPackaged
+    ? packagedRasterWorkerPath()
+    : path.join(__dirname, "raster-worker.cjs"),
+});
 let selectedBasemap: BasemapId = defaultBasemap;
 
 protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "path-profile",
+    privileges: {
+      bypassCSP: true,
+      secure: true,
+      standard: true,
+      supportFetchAPI: true,
+    },
+  },
   {
     scheme: "dsm-tile",
     privileges: {
@@ -59,7 +76,7 @@ async function createWindow(): Promise<void> {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(devServerUrl)) {
+    if (isTrustedRendererUrl(url)) {
       return { action: "allow" };
     }
     return { action: "deny" };
@@ -69,6 +86,22 @@ async function createWindow(): Promise<void> {
 }
 
 async function loadRenderer(window: BrowserWindow): Promise<void> {
+  if (app.isPackaged) {
+    try {
+      await window.loadURL(packagedRendererUrl());
+    } catch (error) {
+      await dialog.showMessageBox(window, {
+        type: "error",
+        title: "Renderer unavailable",
+        message: "Path Profile could not load its packaged renderer.",
+        detail: errorMessage(error),
+        buttons: ["Close"],
+      });
+      window.close();
+    }
+    return;
+  }
+
   while (!window.isDestroyed()) {
     try {
       await waitForRenderer(devServerUrl);
@@ -92,6 +125,31 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
       }
     }
   }
+}
+
+function packagedRendererUrl(): string {
+  return "path-profile://renderer/index.html";
+}
+
+function packagedRendererRoot(): string {
+  return path.join(app.getAppPath(), "out");
+}
+
+function packagedNodeRuntimePath(): string {
+  return path.join(process.resourcesPath, "node", "node.exe");
+}
+
+function packagedNodeModulesPath(): string {
+  return path.join(process.resourcesPath, "node_modules");
+}
+
+function packagedRasterWorkerPath(): string {
+  return path.join(
+    process.resourcesPath,
+    "app.asar.unpacked",
+    "dist-electron",
+    "raster-worker.cjs",
+  );
 }
 
 async function waitForRenderer(url: string, timeoutMs = 30_000): Promise<void> {
@@ -127,6 +185,10 @@ function errorMessage(error: unknown): string {
 async function bootstrap(): Promise<void> {
   await app.whenReady();
   createApplicationMenu();
+
+  if (app.isPackaged) {
+    protocol.handle("path-profile", servePackagedRendererAsset);
+  }
 
   protocol.handle("dsm-tile", async (request) => {
     try {
@@ -276,10 +338,74 @@ function registerIpcHandlers(): void {
         filters: [{ name: "CSV", extensions: ["csv"] }],
       });
 
-      if (result.canceled || !result.filePath) return;
+      if (result.canceled || !result.filePath) return false;
       await fs.writeFile(result.filePath, profilePointsToCsv(points), "utf8");
+      return true;
     },
   );
+}
+
+async function servePackagedRendererAsset(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const root = packagedRendererRoot();
+  const requestPath = decodeURIComponent(
+    url.pathname === "/" ? "/index.html" : url.pathname,
+  );
+  const relativePath = requestPath.replace(/^\/+/, "");
+  const filePath = path.resolve(root, relativePath);
+
+  if (!isPathInside(root, filePath)) {
+    return new Response(null, { status: 403 });
+  }
+
+  try {
+    const file = await fs.readFile(filePath);
+    const body = new Uint8Array(file.length);
+    body.set(file);
+    return new Response(body.buffer, {
+      headers: {
+        "cache-control": "no-store",
+        "content-type": contentTypeForPath(filePath),
+      },
+    });
+  } catch {
+    return new Response(null, { status: 404 });
+  }
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const relativePath = path.relative(root, candidate);
+  return (
+    Boolean(relativePath) &&
+    !relativePath.startsWith("..") &&
+    !path.isAbsolute(relativePath)
+  );
+}
+
+function contentTypeForPath(filePath: string): string {
+  switch (path.extname(filePath).toLowerCase()) {
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".ico":
+      return "image/x-icon";
+    case ".js":
+    case ".mjs":
+      return "text/javascript; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".png":
+      return "image/png";
+    case ".svg":
+      return "image/svg+xml";
+    case ".woff":
+      return "font/woff";
+    case ".woff2":
+      return "font/woff2";
+    default:
+      return "application/octet-stream";
+  }
 }
 
 function assertTrustedSender(event: Electron.IpcMainInvokeEvent): void {
@@ -287,9 +413,17 @@ function assertTrustedSender(event: Electron.IpcMainInvokeEvent): void {
   if (!url) {
     throw new Error("Rejected IPC from unknown sender.");
   }
-  if (!url.startsWith(devServerUrl)) {
+  if (!isTrustedRendererUrl(url)) {
     throw new Error(`Rejected IPC from untrusted sender: ${url}`);
   }
+}
+
+function isTrustedRendererUrl(url: string): boolean {
+  if (app.isPackaged) {
+    return url.startsWith("path-profile://renderer/");
+  }
+
+  return url.startsWith(devServerUrl);
 }
 
 function assertProfileRequest(request: ProfileRequest): void {

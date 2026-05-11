@@ -29,7 +29,7 @@ const api: PathProfileApi = {
     ipcRenderer.invoke(
       "path-profile:export-profile-csv",
       points,
-    ) as Promise<void>,
+    ) as Promise<boolean>,
   onOpenDsmRequested: (callback) => {
     const listener = () => callback();
     ipcRenderer.on("path-profile:menu-open-dsm", listener);

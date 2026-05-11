@@ -80,7 +80,7 @@ export type PathProfileApi = {
   openDsmFiles: () => Promise<string[]>;
   loadDsmProject: (paths: string[]) => Promise<DsmProjectSummary>;
   generateProfile: (request: ProfileRequest) => Promise<ProfileResult>;
-  exportProfileCsv: (points: ProfilePoint[]) => Promise<void>;
+  exportProfileCsv: (points: ProfilePoint[]) => Promise<boolean>;
   onOpenDsmRequested: (callback: () => void) => Unsubscribe;
   onExportProfileRequested: (callback: () => void) => Unsubscribe;
   onBasemapSelected: (callback: (basemapId: BasemapId) => void) => Unsubscribe;

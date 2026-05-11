@@ -2,7 +2,6 @@ import type { Dataset, RasterBand, SpatialReference } from "gdal-async";
 import type {
   DsmFileSummary,
   DsmProjectSummary,
-  Extent,
 } from "../../src/types/path-profile";
 import type { GeoTransform } from "./geo";
 
@@ -24,11 +23,7 @@ export type DsmProject = {
 const projects = new Map<string, DsmProject>();
 
 export function registerProject(project: DsmProject): DsmProjectSummary {
-  const previous = projects.get(project.summary.id);
-  if (previous) {
-    closeProject(previous);
-  }
-
+  closeAllProjects();
   projects.set(project.summary.id, project);
   return project.summary;
 }
@@ -48,16 +43,6 @@ export function closeAllProjects(): void {
   projects.clear();
 }
 
-export function projectFilesForPoint(
-  project: DsmProject,
-  x: number,
-  y: number,
-): DsmFile[] {
-  return project.files
-    .filter((file) => containsClosedExtent(file.extent, x, y))
-    .reverse();
-}
-
 function closeProject(project: DsmProject): void {
   for (const file of project.files) {
     try {
@@ -66,10 +51,4 @@ function closeProject(project: DsmProject): void {
       // Read-only datasets are safe to leave for process cleanup if close fails.
     }
   }
-}
-
-function containsClosedExtent(extent: Extent, x: number, y: number): boolean {
-  return (
-    x >= extent.minX && x <= extent.maxX && y >= extent.minY && y <= extent.maxY
-  );
 }
