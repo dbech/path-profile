@@ -60,6 +60,10 @@ Build both desktop targets:
 bun run build:desktop
 ```
 
+The desktop build also prepares the packaged Node/GDAL runtime and fails if
+`gdal-async` or the raster worker cannot start from the prepared release
+assets.
+
 ## Release
 
 Create an unpacked Windows x64 app directory for smoke testing:
@@ -74,7 +78,11 @@ Create the unsigned Windows x64 installer:
 bun run dist:win
 ```
 
-Release artifacts are written to `dist/`. Run `Path-Profile-Setup-0.1.0-win-x64.exe` to install the app, then launch `Path Profile` from the desktop or Start menu shortcut. The packaged app loads the exported renderer from the bundle and does not require a Next.js server or port `3010`.
+Release artifacts are written to `dist/`. Run the generated
+`Path-Profile-Setup-<version>-win-x64.exe` to install the app, then launch
+`Path Profile` from the desktop or Start menu shortcut. The packaged app loads
+the exported renderer from the bundle and does not require a Next.js server or
+port `3010`.
 
 To create a portable folder zip instead:
 
