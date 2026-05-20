@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   Check,
   Download,
@@ -19,6 +27,11 @@ import { ProfileTable } from "~/components/profile-table";
 import { defaultBasemap, type BasemapId } from "~/lib/basemaps";
 import { getPathProfileApi, hasDesktopBridge } from "~/lib/electron-api";
 import { exportProfileStatus } from "~/lib/export-profile-status";
+import {
+  createDefaultLineOfSightEndpoints,
+  type LineOfSightEndpointId,
+  type LineOfSightEndpoints,
+} from "~/lib/line-of-sight";
 import type {
   ColorPalette,
   ColorSettings,
@@ -30,6 +43,20 @@ import type {
 type ThemeMode = "system" | "light" | "dark" | "high-contrast";
 type PopoverName = "palette" | "theme" | "opacity" | "path" | null;
 type PathSnapshot = { coordinates: Coordinate[]; projection: string } | null;
+type LineOfSightDrafts = Record<LineOfSightEndpointId, string>;
+type ResizeDrag =
+  | {
+      kind: "profile";
+      pointerId: number;
+      startHeight: number;
+      startY: number;
+    }
+  | {
+      kind: "values";
+      pointerId: number;
+      startWidth: number;
+      startX: number;
+    };
 
 const initialColorSettings: ColorSettings = {
   palette: "terrain",
@@ -71,10 +98,31 @@ const palettes: { value: ColorPalette; label: string; swatch: string }[] = [
 const iconButtonClass =
   "flex h-12 w-12 items-center justify-center rounded border border-[var(--overlay-border)] bg-[var(--overlay-bg)] text-[var(--text-primary)] shadow-sm backdrop-blur hover:bg-[var(--control-bg-hover)] disabled:cursor-not-allowed disabled:bg-[var(--disabled-bg)] disabled:text-[var(--disabled-text)]";
 
+const emptyLineOfSightDrafts: LineOfSightDrafts = { start: "", end: "" };
+const defaultProfilePanelHeight = 260;
+const minProfilePanelHeight = 180;
+const minMapHeight = 320;
+const resizeStep = 24;
+const defaultValuesPanelWidth = 420;
+const minValuesPanelWidth = 300;
+const minMapColumnWidth = 520;
+
+/**
+ * Render the Path Profile application UI that manages DEM loading, interactive path drawing and editing, elevation profile sampling, editable line-of-sight endpoints, CSV export, theming, basemap selection, warnings/errors, and resizable profile and values panels.
+ *
+ * This component orchestrates project lifecycle (open/load), path drafting and undo/restore, guarded asynchronous profile generation, editable numeric drafts for line-of-sight endpoints with commit/parse semantics, exporting sampled profile CSV, persistent theme selection, desktop-bridge event subscriptions, keyboard and pointer-driven panel resizing, and all related UI state.
+ *
+ * @returns The root React element for the Path Profile application UI
+ */
 export function PathProfileApp() {
   const [project, setProject] = useState<DsmProjectSummary | null>(null);
   const [colorSettings, setColorSettings] = useState(initialColorSettings);
   const [profilePoints, setProfilePoints] = useState<ProfilePoint[]>([]);
+  const [lineOfSightEndpoints, setLineOfSightEndpoints] =
+    useState<LineOfSightEndpoints | null>(null);
+  const [lineOfSightDrafts, setLineOfSightDrafts] = useState<LineOfSightDrafts>(
+    emptyLineOfSightDrafts,
+  );
   const [activePoint, setActivePoint] = useState<ProfilePoint | null>(null);
   const [draftPath, setDraftPath] = useState<Coordinate[]>([]);
   const [draftProjection, setDraftProjection] = useState<string | null>(null);
@@ -91,6 +139,15 @@ export function PathProfileApp() {
     useState<BasemapId>(defaultBasemap);
   const [openPopover, setOpenPopover] = useState<PopoverName>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+  const [profilePanelHeight, setProfilePanelHeight] = useState(
+    defaultProfilePanelHeight,
+  );
+  const [valuesPanelWidth, setValuesPanelWidth] = useState(
+    defaultValuesPanelWidth,
+  );
+  const [activeResize, setActiveResize] = useState<ResizeDrag["kind"] | null>(
+    null,
+  );
   const [pathContextPosition, setPathContextPosition] = useState<{
     x: number;
     y: number;
@@ -98,10 +155,19 @@ export function PathProfileApp() {
   const pathHistoryRef = useRef<PathSnapshot[]>([]);
   const pendingGenerateAfterFinishRef = useRef(false);
   const profileRequestIdRef = useRef(0);
+  const resizeDragRef = useRef<ResizeDrag | null>(null);
 
   const pathToRestore = useMemo(
     () => ({ coordinates: draftPath, projection: draftProjection }),
     [draftPath, draftProjection],
+  );
+
+  const syncLineOfSightEndpoints = useCallback(
+    (endpoints: LineOfSightEndpoints | null) => {
+      setLineOfSightEndpoints(endpoints);
+      setLineOfSightDrafts(formatLineOfSightDrafts(endpoints));
+    },
+    [],
   );
 
   const profileStats = useMemo(() => {
@@ -116,6 +182,11 @@ export function PathProfileApp() {
     };
   }, [profilePoints]);
 
+  const elevationUnit =
+    project?.elevation.unit && project.elevation.unit !== "unknown"
+      ? project.elevation.unit
+      : null;
+
   const noticeMessages = useMemo(
     () => (project ? warnings : ["Open a DEM from File > Open DEM..."]),
     [project, warnings],
@@ -129,16 +200,20 @@ export function PathProfileApp() {
     };
   }, [draftPath, draftProjection]);
 
-  const restorePathSnapshot = useCallback((snapshot: PathSnapshot) => {
-    setDraftPath(snapshot?.coordinates ?? []);
-    setDraftProjection(snapshot?.projection ?? null);
-    setProfilePoints([]);
-    setActivePoint(null);
-    setDrawingEnabled(false);
-    setPathEditEnabled(false);
-    setRestorePathRequest((request) => request + 1);
-    setStatus(snapshot ? "Path restored" : "Path cleared");
-  }, []);
+  const restorePathSnapshot = useCallback(
+    (snapshot: PathSnapshot) => {
+      setDraftPath(snapshot?.coordinates ?? []);
+      setDraftProjection(snapshot?.projection ?? null);
+      setProfilePoints([]);
+      syncLineOfSightEndpoints(null);
+      setActivePoint(null);
+      setDrawingEnabled(false);
+      setPathEditEnabled(false);
+      setRestorePathRequest((request) => request + 1);
+      setStatus(snapshot ? "Path restored" : "Path cleared");
+    },
+    [syncLineOfSightEndpoints],
+  );
 
   const generateProfileForPath = useCallback(
     async (coordinates: Coordinate[], projection: string) => {
@@ -158,6 +233,9 @@ export function PathProfileApp() {
         });
         if (profileRequestIdRef.current !== requestId) return;
         setProfilePoints(result.points);
+        syncLineOfSightEndpoints(
+          createDefaultLineOfSightEndpoints(result.points),
+        );
         setWarnings(result.warnings);
         setActivePoint(null);
         setStatus(`${result.points.length.toLocaleString()} samples`);
@@ -171,7 +249,7 @@ export function PathProfileApp() {
         }
       }
     },
-    [project],
+    [project, syncLineOfSightEndpoints],
   );
 
   const handleOpen = useCallback(async () => {
@@ -200,6 +278,7 @@ export function PathProfileApp() {
       setProject(summary);
       setWarnings(summary.warnings);
       setProfilePoints([]);
+      syncLineOfSightEndpoints(null);
       setActivePoint(null);
       setDraftPath([]);
       setDraftProjection(null);
@@ -222,7 +301,7 @@ export function PathProfileApp() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [syncLineOfSightEndpoints]);
 
   const handleExport = useCallback(async () => {
     const api = getPathProfileApi();
@@ -281,6 +360,7 @@ export function PathProfileApp() {
     setDraftPath([]);
     setDraftProjection(null);
     setProfilePoints([]);
+    syncLineOfSightEndpoints(null);
     setActivePoint(null);
     profileRequestIdRef.current += 1;
     setDrawingEnabled(true);
@@ -289,7 +369,7 @@ export function PathProfileApp() {
     pathHistoryRef.current = [];
     setOpenPopover(null);
     setStatus("Drawing path");
-  }, []);
+  }, [syncLineOfSightEndpoints]);
 
   const handleSavePathAndGenerateProfile = useCallback(() => {
     if (busy) return;
@@ -327,6 +407,7 @@ export function PathProfileApp() {
     setDraftPath([]);
     setDraftProjection(null);
     setProfilePoints([]);
+    syncLineOfSightEndpoints(null);
     setActivePoint(null);
     profileRequestIdRef.current += 1;
     setDrawingEnabled(false);
@@ -334,7 +415,7 @@ export function PathProfileApp() {
     setClearPathRequest((request) => request + 1);
     setOpenPopover(null);
     setStatus(project ? "Path cleared" : "Idle");
-  }, [currentPathSnapshot, project]);
+  }, [currentPathSnapshot, project, syncLineOfSightEndpoints]);
 
   const handleUndoPath = useCallback(() => {
     const snapshot = pathHistoryRef.current.pop();
@@ -353,6 +434,149 @@ export function PathProfileApp() {
       setOpenPopover("path");
     },
     [draftPath.length],
+  );
+
+  const handleLineOfSightEndpointChange = useCallback(
+    (endpointId: LineOfSightEndpointId, elevation: number) => {
+      if (!Number.isFinite(elevation)) return;
+
+      setLineOfSightEndpoints((current) =>
+        current
+          ? withLineOfSightEndpoint(current, endpointId, elevation)
+          : null,
+      );
+      setLineOfSightDrafts((current) => ({
+        ...current,
+        [endpointId]: formatElevationInput(elevation),
+      }));
+    },
+    [],
+  );
+
+  const handleLineOfSightDraftChange = useCallback(
+    (endpointId: LineOfSightEndpointId, value: string) => {
+      setLineOfSightDrafts((current) => ({ ...current, [endpointId]: value }));
+
+      const elevation = parseElevationDraft(value);
+      if (elevation === null) return;
+
+      setLineOfSightEndpoints((current) =>
+        current
+          ? withLineOfSightEndpoint(current, endpointId, elevation)
+          : null,
+      );
+    },
+    [],
+  );
+
+  const handleLineOfSightDraftCommit = useCallback(
+    (endpointId: LineOfSightEndpointId) => {
+      const elevation = parseElevationDraft(lineOfSightDrafts[endpointId]);
+
+      if (elevation !== null) {
+        handleLineOfSightEndpointChange(endpointId, elevation);
+        return;
+      }
+
+      setLineOfSightDrafts(formatLineOfSightDrafts(lineOfSightEndpoints));
+    },
+    [handleLineOfSightEndpointChange, lineOfSightDrafts, lineOfSightEndpoints],
+  );
+
+  const handleResizePointerDown = useCallback(
+    (kind: ResizeDrag["kind"], event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setActiveResize(kind);
+
+      resizeDragRef.current =
+        kind === "profile"
+          ? {
+              kind,
+              pointerId: event.pointerId,
+              startHeight: profilePanelHeight,
+              startY: event.clientY,
+            }
+          : {
+              kind,
+              pointerId: event.pointerId,
+              startWidth: valuesPanelWidth,
+              startX: event.clientX,
+            };
+    },
+    [profilePanelHeight, valuesPanelWidth],
+  );
+
+  const handleResizePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = resizeDragRef.current;
+      if (drag?.pointerId !== event.pointerId) return;
+
+      event.preventDefault();
+
+      if (drag.kind === "profile") {
+        setProfilePanelHeight(
+          clampProfilePanelHeight(
+            drag.startHeight + drag.startY - event.clientY,
+          ),
+        );
+        return;
+      }
+
+      setValuesPanelWidth(
+        clampValuesPanelWidth(drag.startWidth + drag.startX - event.clientX),
+      );
+    },
+    [],
+  );
+
+  const handleResizePointerEnd = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = resizeDragRef.current;
+      if (drag?.pointerId !== event.pointerId) return;
+
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+
+      resizeDragRef.current = null;
+      setActiveResize(null);
+    },
+    [],
+  );
+
+  const handleResizeKeyDown = useCallback(
+    (kind: ResizeDrag["kind"], event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (kind === "profile") {
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setProfilePanelHeight((height) =>
+            clampProfilePanelHeight(height + resizeStep),
+          );
+        }
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setProfilePanelHeight((height) =>
+            clampProfilePanelHeight(height - resizeStep),
+          );
+        }
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setValuesPanelWidth((width) =>
+          clampValuesPanelWidth(width + resizeStep),
+        );
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        setValuesPanelWidth((width) =>
+          clampValuesPanelWidth(width - resizeStep),
+        );
+      }
+    },
+    [],
   );
 
   useEffect(() => {
@@ -394,6 +618,16 @@ export function PathProfileApp() {
     document.documentElement.dataset.theme = themeMode;
     localStorage.setItem("path-profile-theme", themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setProfilePanelHeight(clampProfilePanelHeight);
+      setValuesPanelWidth(clampValuesPanelWidth);
+    };
+
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -442,7 +676,13 @@ export function PathProfileApp() {
     (palette) => palette.value === colorSettings.palette,
   );
   return (
-    <main className="grid h-screen grid-cols-[minmax(520px,1fr)_420px] grid-rows-[minmax(0,1fr)_260px] bg-[var(--app-bg)] text-[var(--text-primary)]">
+    <main
+      className={`grid h-screen bg-[var(--app-bg)] text-[var(--text-primary)] ${activeResize ? "select-none" : ""}`}
+      style={{
+        gridTemplateColumns: `minmax(${minMapColumnWidth}px, 1fr) ${valuesPanelWidth}px`,
+        gridTemplateRows: `minmax(0, 1fr) ${profilePanelHeight}px`,
+      }}
+    >
       <section className="relative col-start-1 row-start-1 min-w-0 overflow-hidden">
         <DsmMap
           activePoint={activePoint}
@@ -742,7 +982,20 @@ export function PathProfileApp() {
         ) : null}
       </section>
 
-      <section className="col-start-1 row-start-2 flex min-h-0 flex-col border-t border-[var(--panel-border)] bg-[var(--panel-bg)]">
+      <section className="relative col-start-1 row-start-2 flex min-h-0 flex-col border-t border-[var(--panel-border)] bg-[var(--panel-bg)]">
+        <div
+          aria-label="Resize profile panel"
+          aria-orientation="horizontal"
+          className="absolute -top-1 right-0 left-0 z-20 h-2 cursor-row-resize touch-none bg-transparent hover:bg-[var(--accent)]/30"
+          role="separator"
+          tabIndex={0}
+          title="Resize profile panel"
+          onKeyDown={(event) => handleResizeKeyDown("profile", event)}
+          onPointerCancel={handleResizePointerEnd}
+          onPointerDown={(event) => handleResizePointerDown("profile", event)}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerEnd}
+        />
         <div className="flex items-center justify-between gap-4 border-b border-[var(--panel-border)] px-4 py-3">
           <div>
             <h2 className="text-base font-semibold">Profile</h2>
@@ -753,7 +1006,7 @@ export function PathProfileApp() {
             </p>
           </div>
           {profileStats ? (
-            <div className="flex items-center gap-5 text-xs">
+            <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
               <div>
                 <span className="text-[var(--text-muted)]">Min </span>
                 <span className="font-medium text-[var(--text-primary)]">
@@ -766,15 +1019,88 @@ export function PathProfileApp() {
                   {formatNumber(profileStats.max)}
                 </span>
               </div>
+              {lineOfSightEndpoints ? (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <label className="flex items-center gap-1 text-[var(--text-muted)]">
+                    <span>Start elev</span>
+                    <input
+                      className="h-8 w-24 rounded border border-[var(--panel-border)] bg-[var(--control-bg)] px-2 text-right text-[var(--text-primary)]"
+                      inputMode="decimal"
+                      step="any"
+                      type="number"
+                      value={lineOfSightDrafts.start}
+                      onBlur={() => handleLineOfSightDraftCommit("start")}
+                      onChange={(event) =>
+                        handleLineOfSightDraftChange(
+                          "start",
+                          event.target.value,
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                    {elevationUnit ? (
+                      <span className="text-[var(--text-muted)]">
+                        {elevationUnit}
+                      </span>
+                    ) : null}
+                  </label>
+                  <label className="flex items-center gap-1 text-[var(--text-muted)]">
+                    <span>End elev</span>
+                    <input
+                      className="h-8 w-24 rounded border border-[var(--panel-border)] bg-[var(--control-bg)] px-2 text-right text-[var(--text-primary)]"
+                      inputMode="decimal"
+                      step="any"
+                      type="number"
+                      value={lineOfSightDrafts.end}
+                      onBlur={() => handleLineOfSightDraftCommit("end")}
+                      onChange={(event) =>
+                        handleLineOfSightDraftChange("end", event.target.value)
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                    {elevationUnit ? (
+                      <span className="text-[var(--text-muted)]">
+                        {elevationUnit}
+                      </span>
+                    ) : null}
+                  </label>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
         <div className="min-h-0 flex-1 px-4">
-          <ProfileChart points={profilePoints} onHoverPoint={setActivePoint} />
+          <ProfileChart
+            lineOfSightEndpoints={lineOfSightEndpoints}
+            points={profilePoints}
+            onHoverPoint={setActivePoint}
+            onLineOfSightEndpointChange={handleLineOfSightEndpointChange}
+          />
         </div>
       </section>
 
-      <aside className="col-start-2 row-span-2 flex min-h-0 flex-col border-l border-[var(--panel-border)] bg-[var(--panel-bg)]">
+      <aside className="relative col-start-2 row-span-2 flex min-h-0 flex-col border-l border-[var(--panel-border)] bg-[var(--panel-bg)]">
+        <div
+          aria-label="Resize profile values panel"
+          aria-orientation="vertical"
+          className="absolute top-0 bottom-0 -left-1 z-20 w-2 cursor-col-resize touch-none bg-transparent hover:bg-[var(--accent)]/30"
+          role="separator"
+          tabIndex={0}
+          title="Resize profile values panel"
+          onKeyDown={(event) => handleResizeKeyDown("values", event)}
+          onPointerCancel={handleResizePointerEnd}
+          onPointerDown={(event) => handleResizePointerDown("values", event)}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerEnd}
+        />
         <div className="flex items-center justify-between border-b border-[var(--panel-border)] px-4 py-3">
           <div>
             <h2 className="text-base font-semibold">Profile Values</h2>
@@ -801,10 +1127,126 @@ export function PathProfileApp() {
   );
 }
 
+/**
+ * Format a numeric value using the host locale, limiting to at most three decimal places.
+ *
+ * @param value - The number to format
+ * @returns The localized string representation of `value` with up to three fractional digits
+ */
 function formatNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
+/**
+ * Format an elevation value as a string rounded to three decimal places.
+ *
+ * @param value - Elevation in numeric form
+ * @returns The numeric value rounded to three decimal places and returned as a string
+ */
+function formatElevationInput(value: number): string {
+  const rounded = Math.round(value * 1000) / 1000;
+  return rounded.toString();
+}
+
+/**
+ * Create string drafts for line-of-sight endpoint elevations.
+ *
+ * Converts numeric `startElevation` and `endElevation` to formatted string values suitable
+ * for editable inputs; when `endpoints` is `null` returns an empty draft map.
+ *
+ * @param endpoints - The line-of-sight endpoint elevations or `null` to produce empty drafts
+ * @returns Draft string values for `start` and `end` elevations, or empty drafts when `endpoints` is `null`
+ */
+function formatLineOfSightDrafts(
+  endpoints: LineOfSightEndpoints | null,
+): LineOfSightDrafts {
+  if (!endpoints) return { ...emptyLineOfSightDrafts };
+  return {
+    start: formatElevationInput(endpoints.startElevation),
+    end: formatElevationInput(endpoints.endElevation),
+  };
+}
+
+/**
+ * Parses a user-entered elevation string into a numeric elevation when valid.
+ *
+ * @param value - The input string from an elevation field; empty or whitespace-only strings are treated as missing.
+ * @returns The parsed numeric elevation, or `null` if the input is empty, whitespace, or not a finite number.
+ */
+function parseElevationDraft(value: string): number | null {
+  if (value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Create a new LineOfSightEndpoints object with the specified endpoint's elevation updated.
+ *
+ * @param endpoints - The original endpoints object to copy
+ * @param endpointId - Which endpoint to update: `"start"` or `"end"`
+ * @param elevation - The elevation value to assign to the chosen endpoint
+ * @returns A new `LineOfSightEndpoints` with the chosen endpoint's elevation set to `elevation`
+ */
+function withLineOfSightEndpoint(
+  endpoints: LineOfSightEndpoints,
+  endpointId: LineOfSightEndpointId,
+  elevation: number,
+): LineOfSightEndpoints {
+  return endpointId === "start"
+    ? { ...endpoints, startElevation: elevation }
+    : { ...endpoints, endElevation: elevation };
+}
+
+/**
+ * Constrains a requested profile panel height to valid bounds based on the current window size.
+ *
+ * @param height - Desired profile panel height in pixels.
+ * @returns The height clamped to be at least `minProfilePanelHeight` and at most `max(minProfilePanelHeight, window.innerHeight - minMapHeight)`.
+ */
+function clampProfilePanelHeight(height: number): number {
+  if (typeof window === "undefined") return height;
+  const maxHeight = Math.max(
+    minProfilePanelHeight,
+    window.innerHeight - minMapHeight,
+  );
+  return clamp(height, minProfilePanelHeight, maxHeight);
+}
+
+/**
+ * Clamp a proposed values-panel width to the allowed minimum and a window-dependent maximum.
+ *
+ * If `window` is unavailable (e.g., server-side), returns the input `width` unchanged.
+ *
+ * @param width - Desired panel width in pixels
+ * @returns The input width constrained to be at least `minValuesPanelWidth` and at most `max(window.innerWidth - minMapColumnWidth, minValuesPanelWidth)`
+ */
+function clampValuesPanelWidth(width: number): number {
+  if (typeof window === "undefined") return width;
+  const maxWidth = Math.max(
+    minValuesPanelWidth,
+    window.innerWidth - minMapColumnWidth,
+  );
+  return clamp(width, minValuesPanelWidth, maxWidth);
+}
+
+/**
+ * Constrains a number to lie within the inclusive range defined by `min` and `max`.
+ *
+ * @param value - The number to constrain
+ * @param min - The lower bound (inclusive)
+ * @param max - The upper bound (inclusive)
+ * @returns The input constrained to be between `min` and `max`, inclusive
+ */
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Convert an arbitrary thrown value or error-like object into a human-readable message.
+ *
+ * @param error - The thrown value or error to convert; may be an `Error` or any other value
+ * @returns The error message if `error` is an `Error`, otherwise `String(error)`
+ */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
