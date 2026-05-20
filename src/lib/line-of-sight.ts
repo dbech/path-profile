@@ -22,9 +22,7 @@ export function createDefaultLineOfSightEndpoints(
   points: ProfilePoint[],
 ): LineOfSightEndpoints | null {
   const startElevation = points.find(isFiniteProfileElevation)?.elevation;
-  const endElevation = [...points]
-    .reverse()
-    .find(isFiniteProfileElevation)?.elevation;
+  const endElevation = findLastFiniteElevation(points);
 
   if (
     startElevation === undefined ||
@@ -60,13 +58,13 @@ export function lineOfSightElevationAt(
 }
 
 /**
- * Builds an ordered sequence of line-of-sight chart points and explicit `null` separators that represent visible segments and gaps along a terrain profile.
+ * Builds an ordered sequence of line-of-sight chart points and explicit `null` separators that represent visible and hidden stretches along a terrain profile.
  *
- * The function classifies each profile point against the straight line defined by `endpoints`, inserts interpolated crossing points where visibility flips, emits `null` when terrain data is missing, and avoids consecutive `null` entries.
+ * The function classifies each profile point against the straight line defined by `endpoints`, inserts interpolated crossing points where visibility flips, emits `null` when terrain data is missing or the sight line is occluded by terrain, and avoids consecutive `null` entries.
  *
  * @param points - Array of profile points (each with `distance` and `elevation`) describing the terrain.
  * @param endpoints - Endpoint elevations for the sight line; when `null` the function returns an empty array.
- * @returns An array where visible positions are expressed as `LineOfSightChartPoint` objects and gaps or separators are represented by `null`.
+ * @returns An array where visible positions are expressed as `LineOfSightChartPoint` objects and missing-data or terrain-occluded separators are represented by `null`.
  */
 export function buildVisibleLineOfSightSegments(
   points: ProfilePoint[],
@@ -192,6 +190,15 @@ function appendLineOfSightPoint(
   const last = points.at(-1);
   if (point === null && last === null) return;
   points.push(point);
+}
+
+function findLastFiniteElevation(points: ProfilePoint[]): number | undefined {
+  for (let index = points.length - 1; index >= 0; index--) {
+    const point = points[index];
+    if (point && isFiniteProfileElevation(point)) return point.elevation;
+  }
+
+  return undefined;
 }
 
 /**

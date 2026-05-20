@@ -15,7 +15,6 @@ import {
   LineElement,
   PointElement,
   Tooltip,
-  type ActiveElement,
   type ChartData,
   type ChartEvent,
   type ChartOptions,
@@ -300,14 +299,30 @@ export function ProfileChart({
         },
       },
     },
-    onHover: (_event: ChartEvent, elements: ActiveElement[]) => {
-      const element = elements.find((active) => active.datasetIndex === 0);
-      if (!element) {
+    onHover: (event: ChartEvent) => {
+      const chart = chartRef.current;
+      const xScale = chart?.scales.x;
+
+      if (
+        !chart ||
+        !xScale ||
+        typeof event.x !== "number" ||
+        typeof event.y !== "number" ||
+        event.x < chart.chartArea.left ||
+        event.x > chart.chartArea.right ||
+        event.y < chart.chartArea.top ||
+        event.y > chart.chartArea.bottom
+      ) {
         onHoverPoint(null);
         return;
       }
 
-      const point = points[element.index] ?? null;
+      const distance = xScale.getValueForPixel(event.x);
+      const point =
+        typeof distance === "number" && Number.isFinite(distance)
+          ? getNearestProfilePointAtDistance(points, distance)
+          : null;
+
       onHoverPoint(point?.elevation === null ? null : point);
     },
   };
@@ -347,6 +362,38 @@ function getPointerPosition(
     x: event.clientX - rect.left,
     y: event.clientY - rect.top,
   };
+}
+
+function getNearestProfilePointAtDistance(
+  points: ProfilePoint[],
+  distance: number,
+): ProfilePoint | null {
+  if (points.length === 0) return null;
+
+  let low = 0;
+  let high = points.length - 1;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const middlePoint = points[middle];
+
+    if (middlePoint && middlePoint.distance < distance) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  const candidate = points[low] ?? null;
+  const previous = low > 0 ? (points[low - 1] ?? null) : null;
+
+  if (!candidate) return previous;
+  if (!previous) return candidate;
+
+  return Math.abs(previous.distance - distance) <=
+    Math.abs(candidate.distance - distance)
+    ? previous
+    : candidate;
 }
 
 /**
