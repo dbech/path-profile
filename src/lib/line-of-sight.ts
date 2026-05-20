@@ -12,6 +12,12 @@ export type LineOfSightChartPoint = {
   y: number;
 };
 
+/**
+ * Derives line-of-sight endpoint elevations from the first and last finite elevations in a profile.
+ *
+ * @param points - Array of profile points to scan for finite elevation values
+ * @returns `LineOfSightEndpoints` containing `startElevation` and `endElevation` when both are finite, `null` if either endpoint cannot be determined or is not a finite number
+ */
 export function createDefaultLineOfSightEndpoints(
   points: ProfilePoint[],
 ): LineOfSightEndpoints | null {
@@ -32,6 +38,14 @@ export function createDefaultLineOfSightEndpoints(
   return { startElevation, endElevation };
 }
 
+/**
+ * Compute the line-of-sight elevation at a specified distance by linearly interpolating between the start and end endpoint elevations.
+ *
+ * @param distance - Distance from the start point along the profile at which to evaluate the line elevation
+ * @param lastDistance - Reference distance corresponding to the end endpoint; if `lastDistance <= 0`, the function returns `endpoints.startElevation`
+ * @param endpoints - Object containing `startElevation` and `endElevation` to interpolate between
+ * @returns The interpolated line-of-sight elevation at `distance`
+ */
 export function lineOfSightElevationAt(
   distance: number,
   lastDistance: number,
@@ -45,6 +59,14 @@ export function lineOfSightElevationAt(
   );
 }
 
+/**
+ * Builds an ordered sequence of line-of-sight chart points and explicit `null` separators that represent visible segments and gaps along a terrain profile.
+ *
+ * The function classifies each profile point against the straight line defined by `endpoints`, inserts interpolated crossing points where visibility flips, emits `null` when terrain data is missing, and avoids consecutive `null` entries.
+ *
+ * @param points - Array of profile points (each with `distance` and `elevation`) describing the terrain.
+ * @param endpoints - Endpoint elevations for the sight line; when `null` the function returns an empty array.
+ * @returns An array where visible positions are expressed as `LineOfSightChartPoint` objects and gaps or separators are represented by `null`.
 export function buildVisibleLineOfSightSegments(
   points: ProfilePoint[],
   endpoints: LineOfSightEndpoints | null,
@@ -91,6 +113,19 @@ type ClassifiedPoint = {
   visible: boolean;
 };
 
+/**
+ * Classifies a profile point relative to the line of sight at the point's distance.
+ *
+ * @param point - Profile point containing `distance` and `elevation`
+ * @param lastDistance - Reference distance used to compute the line elevation interpolation
+ * @param endpoints - Line-of-sight endpoint elevations (`startElevation` and `endElevation`)
+ * @returns An object with:
+ *  - `distance`: the input point distance,
+ *  - `delta`: `lineElevation - terrainElevation` or `null` when terrain elevation is missing,
+ *  - `kind`: `"finite"` when terrain elevation is present or `"gap"` otherwise,
+ *  - `linePoint`: `{ x, y }` coordinates on the line of sight at the point distance,
+ *  - `visible`: `true` when terrain is below the line (`delta > 0`), `false` otherwise
+ */
 function classifyPoint(
   point: ProfilePoint,
   lastDistance: number,
@@ -113,6 +148,15 @@ function classifyPoint(
   };
 }
 
+/**
+ * Computes the interpolated chart point along the segment where visibility changes between two classified points.
+ *
+ * @param start - The classified point at the start of the segment
+ * @param end - The classified point at the end of the segment
+ * @param lastDistance - The last distance in the profile (used to compute line elevation)
+ * @param endpoints - The start and end elevations that define the line of sight
+ * @returns A chart point (`{ x, y }`) on the line of sight at the estimated crossing distance where visibility flips between `start` and `end`
+ */
 function crossingPoint(
   start: ClassifiedPoint,
   end: ClassifiedPoint,
@@ -132,6 +176,14 @@ function crossingPoint(
   };
 }
 
+/**
+ * Appends a line-of-sight chart point to the array, avoiding consecutive `null` separators.
+ *
+ * If `point` is `null` and the last element of `points` is also `null`, the array is not modified.
+ *
+ * @param points - The array to append into; elements are chart points or `null` gap separators
+ * @param point - The chart point to append, or `null` to represent a gap
+ */
 function appendLineOfSightPoint(
   points: (LineOfSightChartPoint | null)[],
   point: LineOfSightChartPoint | null,
@@ -141,6 +193,11 @@ function appendLineOfSightPoint(
   points.push(point);
 }
 
+/**
+ * Determines whether a profile point has a finite numeric elevation.
+ *
+ * @returns `true` if `point.elevation` is a finite number, `false` otherwise.
+ */
 function isFiniteProfileElevation(
   point: ProfilePoint,
 ): point is ProfilePoint & { elevation: number } {

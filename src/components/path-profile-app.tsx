@@ -107,6 +107,13 @@ const defaultValuesPanelWidth = 420;
 const minValuesPanelWidth = 300;
 const minMapColumnWidth = 520;
 
+/**
+ * Render the Path Profile application UI that manages DEM loading, interactive path drawing and editing, elevation profile sampling, editable line-of-sight endpoints, CSV export, theming, basemap selection, warnings/errors, and resizable profile and values panels.
+ *
+ * This component orchestrates project lifecycle (open/load), path drafting and undo/restore, guarded asynchronous profile generation, editable numeric drafts for line-of-sight endpoints with commit/parse semantics, exporting sampled profile CSV, persistent theme selection, desktop-bridge event subscriptions, keyboard and pointer-driven panel resizing, and all related UI state.
+ *
+ * @returns The root React element for the Path Profile application UI
+ */
 export function PathProfileApp() {
   const [project, setProject] = useState<DsmProjectSummary | null>(null);
   const [colorSettings, setColorSettings] = useState(initialColorSettings);
@@ -1120,15 +1127,36 @@ export function PathProfileApp() {
   );
 }
 
+/**
+ * Format a numeric value using the host locale, limiting to at most three decimal places.
+ *
+ * @param value - The number to format
+ * @returns The localized string representation of `value` with up to three fractional digits
+ */
 function formatNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
+/**
+ * Format an elevation value as a string rounded to three decimal places.
+ *
+ * @param value - Elevation in numeric form
+ * @returns The numeric value rounded to three decimal places and returned as a string
+ */
 function formatElevationInput(value: number): string {
   const rounded = Math.round(value * 1000) / 1000;
   return rounded.toString();
 }
 
+/**
+ * Create string drafts for line-of-sight endpoint elevations.
+ *
+ * Converts numeric `startElevation` and `endElevation` to formatted string values suitable
+ * for editable inputs; when `endpoints` is `null` returns an empty draft map.
+ *
+ * @param endpoints - The line-of-sight endpoint elevations or `null` to produce empty drafts
+ * @returns Draft string values for `start` and `end` elevations, or empty drafts when `endpoints` is `null`
+ */
 function formatLineOfSightDrafts(
   endpoints: LineOfSightEndpoints | null,
 ): LineOfSightDrafts {
@@ -1139,12 +1167,26 @@ function formatLineOfSightDrafts(
   };
 }
 
+/**
+ * Parses a user-entered elevation string into a numeric elevation when valid.
+ *
+ * @param value - The input string from an elevation field; empty or whitespace-only strings are treated as missing.
+ * @returns The parsed numeric elevation, or `null` if the input is empty, whitespace, or not a finite number.
+ */
 function parseElevationDraft(value: string): number | null {
   if (value.trim() === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * Create a new LineOfSightEndpoints object with the specified endpoint's elevation updated.
+ *
+ * @param endpoints - The original endpoints object to copy
+ * @param endpointId - Which endpoint to update: `"start"` or `"end"`
+ * @param elevation - The elevation value to assign to the chosen endpoint
+ * @returns A new `LineOfSightEndpoints` with the chosen endpoint's elevation set to `elevation`
+ */
 function withLineOfSightEndpoint(
   endpoints: LineOfSightEndpoints,
   endpointId: LineOfSightEndpointId,
@@ -1155,6 +1197,12 @@ function withLineOfSightEndpoint(
     : { ...endpoints, endElevation: elevation };
 }
 
+/**
+ * Constrains a requested profile panel height to valid bounds based on the current window size.
+ *
+ * @param height - Desired profile panel height in pixels.
+ * @returns The height clamped to be at least `minProfilePanelHeight` and at most `max(minProfilePanelHeight, window.innerHeight - minMapHeight)`. 
+ */
 function clampProfilePanelHeight(height: number): number {
   if (typeof window === "undefined") return height;
   const maxHeight = Math.max(
@@ -1164,6 +1212,14 @@ function clampProfilePanelHeight(height: number): number {
   return clamp(height, minProfilePanelHeight, maxHeight);
 }
 
+/**
+ * Clamp a proposed values-panel width to the allowed minimum and a window-dependent maximum.
+ *
+ * If `window` is unavailable (e.g., server-side), returns the input `width` unchanged.
+ *
+ * @param width - Desired panel width in pixels
+ * @returns The input width constrained to be at least `minValuesPanelWidth` and at most `max(window.innerWidth - minMapColumnWidth, minValuesPanelWidth)`
+ */
 function clampValuesPanelWidth(width: number): number {
   if (typeof window === "undefined") return width;
   const maxWidth = Math.max(
@@ -1173,10 +1229,24 @@ function clampValuesPanelWidth(width: number): number {
   return clamp(width, minValuesPanelWidth, maxWidth);
 }
 
+/**
+ * Constrains a number to lie within the inclusive range defined by `min` and `max`.
+ *
+ * @param value - The number to constrain
+ * @param min - The lower bound (inclusive)
+ * @param max - The upper bound (inclusive)
+ * @returns The input constrained to be between `min` and `max`, inclusive
+ */
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+/**
+ * Convert an arbitrary thrown value or error-like object into a human-readable message.
+ *
+ * @param error - The thrown value or error to convert; may be an `Error` or any other value
+ * @returns The error message if `error` is an `Error`, otherwise `String(error)`
+ */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

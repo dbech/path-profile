@@ -49,6 +49,20 @@ type ProfileChartProps = {
 
 const endpointHitRadius = 12;
 
+/**
+ * Render an elevation vs. distance line chart with optional interactive line-of-sight endpoints.
+ *
+ * When `lineOfSightEndpoints` is provided the component overlays dashed LOS segments and two draggable
+ * endpoint handles (start at distance 0, end at the last sample distance). Hovering over profile points
+ * invokes `onHoverPoint`. Dragging a LOS handle calls `onLineOfSightEndpointChange` with the moved
+ * endpoint id and the new absolute elevation derived from the chart Y scale.
+ *
+ * @param lineOfSightEndpoints - Optional start/end elevations used to draw LOS segments and endpoint handles; when `null` no LOS is shown.
+ * @param points - Ordered profile samples where each item provides `distance` (x) and `elevation` (y).
+ * @param onHoverPoint - Called with the hovered profile point (from the main elevation dataset) or `null` when no point is hovered.
+ * @param onLineOfSightEndpointChange - Called with `(endpointId, absoluteElevation)` when a LOS endpoint is moved by the user.
+ * @returns A JSX element that renders the chart and handles pointer interactions for hovering and dragging endpoints.
+ */
 export function ProfileChart({
   lineOfSightEndpoints,
   points,
@@ -317,6 +331,13 @@ export function ProfileChart({
   );
 }
 
+/**
+ * Compute pointer coordinates relative to the chart's canvas.
+ *
+ * @param event - The pointer event from the chart container
+ * @param chart - The Chart.js line chart whose canvas bounds are used
+ * @returns The `{ x, y }` position in pixels measured from the chart canvas's top-left corner
+ */
 function getPointerPosition(
   event: PointerEvent<HTMLDivElement>,
   chart: ChartJS<"line">,
@@ -328,6 +349,12 @@ function getPointerPosition(
   };
 }
 
+/**
+ * Split an iterable of profile points (with `null` used as a gap marker) into continuous visible segments.
+ *
+ * @param points - Iterable produced by `buildVisibleLineOfSightSegments` where `null` separates segments.
+ * @returns An array of segments; each segment is an array of `{ x, y }` points and is included only if it contains more than one point.
+ */
 function splitVisibleLineOfSightSegments(
   points: ReturnType<typeof buildVisibleLineOfSightSegments>,
 ) {
@@ -353,10 +380,29 @@ function splitVisibleLineOfSightSegments(
   return segments;
 }
 
+/**
+ * Formats a number using the runtime locale with up to three digits after the decimal point.
+ *
+ * @param value - The number to format
+ * @returns The locale-aware string representation of `value` with at most three fractional digits
+ */
 function formatNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
+/**
+ * Provide chart-related theme color values sourced from CSS custom properties or a fixed fallback during server-side rendering.
+ *
+ * @returns An object with the following CSS color string properties:
+ * - `chartLine`: primary line color for the profile chart
+ * - `chartFill`: fill color for the profile area beneath the line
+ * - `grid`: grid line color
+ * - `lineOfSight`: color used for line-of-sight segments
+ * - `lineOfSightHandleBorder`: border color for line-of-sight endpoint handles
+ * - `textSecondary`: secondary text color used for chart labels and tooltips
+ *
+ * When `window` is unavailable (SSR), returns fixed fallback values; when running in a browser, reads values from CSS custom properties on `:root`.
+ */
 function getThemeColors() {
   if (typeof window === "undefined") {
     return {
