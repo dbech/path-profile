@@ -67,6 +67,7 @@ export function lineOfSightElevationAt(
  * @param points - Array of profile points (each with `distance` and `elevation`) describing the terrain.
  * @param endpoints - Endpoint elevations for the sight line; when `null` the function returns an empty array.
  * @returns An array where visible positions are expressed as `LineOfSightChartPoint` objects and gaps or separators are represented by `null`.
+ */
 export function buildVisibleLineOfSightSegments(
   points: ProfilePoint[],
   endpoints: LineOfSightEndpoints | null,

@@ -1201,7 +1201,7 @@ function withLineOfSightEndpoint(
  * Constrains a requested profile panel height to valid bounds based on the current window size.
  *
  * @param height - Desired profile panel height in pixels.
- * @returns The height clamped to be at least `minProfilePanelHeight` and at most `max(minProfilePanelHeight, window.innerHeight - minMapHeight)`. 
+ * @returns The height clamped to be at least `minProfilePanelHeight` and at most `max(minProfilePanelHeight, window.innerHeight - minMapHeight)`.
  */
 function clampProfilePanelHeight(height: number): number {
   if (typeof window === "undefined") return height;
