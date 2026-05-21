@@ -152,6 +152,7 @@ export function PathProfileApp() {
   } | null>(null);
   const pathHistoryRef = useRef<PathSnapshot[]>([]);
   const profileRequestIdRef = useRef(0);
+  const profileRequestBusyRef = useRef(false);
   const resizeDragRef = useRef<ResizeDrag | null>(null);
 
   const pathToRestore = useMemo(
@@ -166,6 +167,16 @@ export function PathProfileApp() {
     },
     [],
   );
+
+  const invalidateProfileRequest = useCallback((clearBusy = true) => {
+    profileRequestIdRef.current += 1;
+    if (profileRequestBusyRef.current) {
+      profileRequestBusyRef.current = false;
+      if (clearBusy) {
+        setBusy(false);
+      }
+    }
+  }, []);
 
   const profileStats = useMemo(() => {
     const elevations = profilePoints
@@ -220,6 +231,7 @@ export function PathProfileApp() {
 
       const requestId = profileRequestIdRef.current + 1;
       profileRequestIdRef.current = requestId;
+      profileRequestBusyRef.current = true;
       setBusy(true);
       setError(null);
       setStatus("Sampling profile");
@@ -243,6 +255,7 @@ export function PathProfileApp() {
         setStatus("Profile failed");
       } finally {
         if (profileRequestIdRef.current === requestId) {
+          profileRequestBusyRef.current = false;
           setBusy(false);
         }
       }
@@ -272,7 +285,7 @@ export function PathProfileApp() {
 
       setStatus("Loading DEM");
       const summary = await api.loadDsmProject(paths);
-      profileRequestIdRef.current += 1;
+      invalidateProfileRequest(false);
       setProject(summary);
       setWarnings(summary.warnings);
       setProfilePoints([]);
@@ -299,7 +312,7 @@ export function PathProfileApp() {
     } finally {
       setBusy(false);
     }
-  }, [syncLineOfSightEndpoints]);
+  }, [invalidateProfileRequest, syncLineOfSightEndpoints]);
 
   const handleExport = useCallback(async () => {
     const api = getPathProfileApi();
@@ -348,7 +361,7 @@ export function PathProfileApp() {
         setProfilePoints([]);
         syncLineOfSightEndpoints(null);
         setActivePoint(null);
-        profileRequestIdRef.current += 1;
+        invalidateProfileRequest();
         setDrawingEnabled(false);
         setPathEditEnabled(false);
         setClearPathRequest((request) => request + 1);
@@ -363,7 +376,12 @@ export function PathProfileApp() {
       setStatus("A to B path");
       void generateProfileForPath(straightPath, projection);
     },
-    [currentPathSnapshot, generateProfileForPath, syncLineOfSightEndpoints],
+    [
+      currentPathSnapshot,
+      generateProfileForPath,
+      invalidateProfileRequest,
+      syncLineOfSightEndpoints,
+    ],
   );
 
   const handleStartPath = useCallback(() => {
@@ -379,7 +397,7 @@ export function PathProfileApp() {
     pathHistoryRef.current = [];
     setOpenPopover(null);
     setStatus("Place A, then B");
-  }, [syncLineOfSightEndpoints]);
+  }, [invalidateProfileRequest, syncLineOfSightEndpoints]);
 
   const handleEndPathEdit = useCallback(() => {
     setPathEditEnabled(false);
@@ -399,13 +417,18 @@ export function PathProfileApp() {
     setProfilePoints([]);
     syncLineOfSightEndpoints(null);
     setActivePoint(null);
-    profileRequestIdRef.current += 1;
+    invalidateProfileRequest();
     setDrawingEnabled(false);
     setPathEditEnabled(false);
     setClearPathRequest((request) => request + 1);
     setOpenPopover(null);
     setStatus(project ? "Path cleared" : "Idle");
-  }, [currentPathSnapshot, project, syncLineOfSightEndpoints]);
+  }, [
+    currentPathSnapshot,
+    invalidateProfileRequest,
+    project,
+    syncLineOfSightEndpoints,
+  ]);
 
   const handleUndoPath = useCallback(() => {
     const snapshot = pathHistoryRef.current.pop();
