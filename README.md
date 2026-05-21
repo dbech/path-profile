@@ -124,10 +124,9 @@ bun run format:check
 2. Use `File > Open DEM...` to select one or more DEM GeoTIFF files.
 3. Use the floating map controls to choose DEM styling and start the path tool.
 4. Use `View > Basemap` to choose the background basemap.
-5. Draw a path over the DEM.
-6. Save the path to generate the elevation profile.
-7. Hover the profile chart or table to inspect the sampled map location.
-8. Use `File > Export Profile CSV` or the CSV button to export profile values.
+5. Click the map once to place `A`, then click again to place `B` and generate the elevation profile.
+6. Hover the profile chart or table to inspect the sampled map location.
+7. Use `File > Export Profile CSV` or the CSV button to export profile values.
 
 ## Notes
 

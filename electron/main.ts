@@ -66,6 +66,7 @@ async function createWindow(): Promise<void> {
     height: 980,
     minWidth: 1040,
     minHeight: 720,
+    show: false,
     title: "Path Profile",
     webPreferences: {
       contextIsolation: true,
@@ -83,6 +84,9 @@ async function createWindow(): Promise<void> {
   });
 
   await loadRenderer(window);
+  if (!window.isDestroyed()) {
+    window.show();
+  }
 }
 
 async function loadRenderer(window: BrowserWindow): Promise<void> {

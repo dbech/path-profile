@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import Feature from "ol/Feature";
+import Feature, { type FeatureLike } from "ol/Feature";
 import Map from "ol/Map";
 import View from "ol/View";
 import { defaults as defaultControls } from "ol/control/defaults";
@@ -23,8 +23,9 @@ import VectorSource from "ol/source/Vector";
 import XYZ from "ol/source/XYZ";
 import Fill from "ol/style/Fill";
 import CircleStyle from "ol/style/Circle";
+import Icon from "ol/style/Icon";
 import Stroke from "ol/style/Stroke";
-import Style from "ol/style/Style";
+import Style, { type StyleFunction } from "ol/style/Style";
 import TileGrid from "ol/tilegrid/TileGrid";
 import { type BasemapId, getBasemap } from "~/lib/basemaps";
 import type {
@@ -42,7 +43,6 @@ type DsmMapProps = {
   selectedBasemap: BasemapId;
   drawingEnabled: boolean;
   pathEditEnabled: boolean;
-  finishDrawingRequest: number;
   clearPathRequest: number;
   restorePathRequest: number;
   pathToRestore: { coordinates: Coordinate[]; projection: string | null };
@@ -52,7 +52,6 @@ type DsmMapProps = {
     projection: string,
     changeType: "draw" | "modify",
   ) => void;
-  onFinishDrawingFailed: () => void;
   onPathContextMenu: (position: { x: number; y: number }) => void;
 };
 
@@ -60,6 +59,12 @@ type DsmRenderSettings = {
   palette: ColorPalette;
   reverse: boolean;
 };
+
+const endpointColors: Record<"A" | "B", string> = {
+  A: "#157b68",
+  B: "#c93d4b",
+};
+const endpointBadgeSize = 18;
 
 const lineStyle = new Style({
   stroke: new Stroke({ color: "#f6c445", width: 3 }),
@@ -77,6 +82,20 @@ const markerStyle = new Style({
   }),
 });
 
+const pathEndpointStyles = [
+  createEndpointLabelStyle("A", endpointColors.A, "start"),
+  createEndpointLabelStyle("B", endpointColors.B, "end"),
+];
+
+const normalPathStyles = [lineStyle, ...pathEndpointStyles];
+const editingPathStyles = [editLineStyle, ...pathEndpointStyles];
+
+const endpointLabelStyles: Record<"A" | "B", Style> = {
+  A: createEndpointLabelStyle("A", endpointColors.A),
+  B: createEndpointLabelStyle("B", endpointColors.B),
+};
+
+const hiddenModifyStyle: StyleFunction = () => undefined;
 const basemapProjectionCode = "EPSG:3857";
 
 export function DsmMap({
@@ -85,13 +104,11 @@ export function DsmMap({
   selectedBasemap,
   drawingEnabled,
   pathEditEnabled,
-  finishDrawingRequest,
   clearPathRequest,
   restorePathRequest,
   pathToRestore,
   activePoint,
   onDraftPathChange,
-  onFinishDrawingFailed,
   onPathContextMenu,
 }: DsmMapProps) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
@@ -100,12 +117,12 @@ export function DsmMap({
   const basemapLayerRef = useRef<TileLayer<XYZ> | null>(null);
   const colorSettingsRef = useRef(colorSettings);
   const pathSourceRef = useRef(new VectorSource());
+  const sketchEndpointSourceRef = useRef(new VectorSource());
   const markerSourceRef = useRef(new VectorSource());
   const drawRef = useRef<Draw | null>(null);
   const modifyRef = useRef<Modify | null>(null);
   const snapRef = useRef<Snap | null>(null);
   const onDraftPathChangeRef = useRef(onDraftPathChange);
-  const onFinishDrawingFailedRef = useRef(onFinishDrawingFailed);
   const onPathContextMenuRef = useRef(onPathContextMenu);
   const lastRestorePathRequestRef = useRef(0);
 
@@ -130,13 +147,17 @@ export function DsmMap({
 
     const pathLayer = new VectorLayer({
       source: pathSourceRef.current,
-      style: (feature) =>
-        feature.get("editing") === true ? editLineStyle : lineStyle,
+      style: pathFeatureStyle,
       zIndex: 20,
     });
     const markerLayer = new VectorLayer({
       source: markerSourceRef.current,
       style: markerStyle,
+      zIndex: 40,
+    });
+    const sketchEndpointLayer = new VectorLayer({
+      source: sketchEndpointSourceRef.current,
+      style: endpointLabelStyle,
       zIndex: 30,
     });
     const map = new Map({
@@ -146,7 +167,7 @@ export function DsmMap({
         rotate: false,
         zoom: false,
       }),
-      layers: [pathLayer, markerLayer],
+      layers: [pathLayer, sketchEndpointLayer, markerLayer],
       view: new View({
         projection: basemapProjectionCode,
         center: [0, 0],
@@ -171,10 +192,6 @@ export function DsmMap({
   }, [onDraftPathChange]);
 
   useEffect(() => {
-    onFinishDrawingFailedRef.current = onFinishDrawingFailed;
-  }, [onFinishDrawingFailed]);
-
-  useEffect(() => {
     onPathContextMenuRef.current = onPathContextMenu;
   }, [onPathContextMenu]);
 
@@ -184,6 +201,7 @@ export function DsmMap({
 
     registerProjectProjection(project);
     pathSourceRef.current.clear();
+    sketchEndpointSourceRef.current.clear();
     markerSourceRef.current.clear();
 
     if (drawRef.current) map.removeInteraction(drawRef.current);
@@ -238,35 +256,57 @@ export function DsmMap({
     const draw = new Draw({
       source: pathSourceRef.current,
       type: "LineString",
-      style: editLineStyle,
+      minPoints: 2,
+      maxPoints: 2,
+      style: editingPathStyles,
     });
-    draw.on("drawstart", () => {
+    draw.on("drawstart", (event) => {
       pathSourceRef.current.clear();
+      sketchEndpointSourceRef.current.clear();
       markerSourceRef.current.clear();
+
+      const geometry = event.feature.getGeometry();
+      if (geometry instanceof LineString) {
+        const start = geometry.getCoordinates()[0] as Coordinate | undefined;
+        if (start) {
+          updateEndpointLabels(sketchEndpointSourceRef.current, [start]);
+        }
+      }
     });
     draw.on("drawend", (event) => {
       const geometry = event.feature.getGeometry();
       if (geometry instanceof LineString) {
-        event.feature.set("path", true);
-        onDraftPathChangeRef.current(
+        const coordinates = straightPathEndpoints(
           geometry.getCoordinates() as Coordinate[],
-          projectionCode,
-          "draw",
         );
+        if (coordinates.length < 2) return;
+
+        geometry.setCoordinates(coordinates);
+        event.feature.set("path", true);
+        sketchEndpointSourceRef.current.clear();
+        onDraftPathChangeRef.current(coordinates, projectionCode, "draw");
       }
     });
     draw.setActive(false);
 
-    const modify = new Modify({ source: pathSourceRef.current });
+    const modify = new Modify({
+      source: pathSourceRef.current,
+      insertVertexCondition: () => false,
+      deleteCondition: () => false,
+      pixelTolerance: 16,
+      style: hiddenModifyStyle,
+    });
     modify.on("modifyend", () => {
       const feature = pathSourceRef.current.getFeatures()[0];
       const geometry = feature?.getGeometry();
       if (geometry instanceof LineString) {
-        onDraftPathChangeRef.current(
+        const coordinates = straightPathEndpoints(
           geometry.getCoordinates() as Coordinate[],
-          projectionCode,
-          "modify",
         );
+        if (coordinates.length < 2) return;
+
+        geometry.setCoordinates(coordinates);
+        onDraftPathChangeRef.current(coordinates, projectionCode, "modify");
       }
     });
     modify.setActive(false);
@@ -289,21 +329,15 @@ export function DsmMap({
   }, [drawingEnabled, pathEditEnabled]);
 
   useEffect(() => {
-    if (finishDrawingRequest === 0) return;
-    const draw = drawRef.current;
-    if (!draw?.getActive()) return;
-
-    try {
-      draw.finishDrawing();
-    } catch {
-      // OpenLayers throws if there are not enough points to finish the sketch.
-      onFinishDrawingFailedRef.current();
+    for (const feature of pathSourceRef.current.getFeatures()) {
+      feature.set("editing", pathEditEnabled);
     }
-  }, [finishDrawingRequest]);
+  }, [pathEditEnabled]);
 
   useEffect(() => {
     if (clearPathRequest === 0) return;
     pathSourceRef.current.clear();
+    sketchEndpointSourceRef.current.clear();
     markerSourceRef.current.clear();
   }, [clearPathRequest]);
 
@@ -312,11 +346,12 @@ export function DsmMap({
     if (lastRestorePathRequestRef.current === restorePathRequest) return;
     lastRestorePathRequestRef.current = restorePathRequest;
     pathSourceRef.current.clear();
+    sketchEndpointSourceRef.current.clear();
     markerSourceRef.current.clear();
     if (pathToRestore.coordinates.length < 2) return;
-    pathSourceRef.current.addFeature(
-      createPathFeature(pathToRestore.coordinates),
-    );
+    const coordinates = straightPathEndpoints(pathToRestore.coordinates);
+    if (coordinates.length < 2) return;
+    pathSourceRef.current.addFeature(createPathFeature(coordinates));
   }, [pathToRestore, restorePathRequest]);
 
   useEffect(() => {
@@ -511,6 +546,82 @@ function createPathFeature(coordinates: Coordinate[]): Feature<LineString> {
     geometry: new LineString(coordinates),
     path: true,
   });
+}
+
+function pathFeatureStyle(feature: FeatureLike): Style[] {
+  return feature.get("editing") === true ? editingPathStyles : normalPathStyles;
+}
+
+function straightPathEndpoints(coordinates: Coordinate[]): Coordinate[] {
+  const first = coordinates[0];
+  const last = coordinates.at(-1);
+  if (!first || !last || coordinates.length < 2) return [];
+
+  return [
+    [first[0], first[1]],
+    [last[0], last[1]],
+  ];
+}
+
+function updateEndpointLabels(
+  source: VectorSource,
+  coordinates: Coordinate[],
+): void {
+  source.clear();
+
+  const first = coordinates[0];
+  if (first) {
+    source.addFeature(createEndpointFeature("A", first));
+  }
+
+  const last = coordinates.at(-1);
+  if (last && coordinates.length >= 2) {
+    source.addFeature(createEndpointFeature("B", last));
+  }
+}
+
+function createEndpointFeature(label: "A" | "B", coordinate: Coordinate) {
+  const feature = new Feature({
+    geometry: new Point(coordinate),
+  });
+  feature.set("endpointLabel", label);
+  return feature;
+}
+
+function endpointLabelStyle(feature: FeatureLike): Style {
+  const label = feature.get("endpointLabel") === "B" ? "B" : "A";
+  return endpointLabelStyles[label];
+}
+
+function createEndpointLabelStyle(
+  label: "A" | "B",
+  color: string,
+  endpoint?: "start" | "end",
+): Style {
+  return new Style({
+    geometry: endpoint ? endpointGeometry(endpoint) : undefined,
+    image: new Icon({
+      src: createEndpointBadgeDataUrl(label, color),
+    }),
+  });
+}
+
+function createEndpointBadgeDataUrl(label: "A" | "B", color: string): string {
+  const center = endpointBadgeSize / 2;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${endpointBadgeSize}" height="${endpointBadgeSize}" viewBox="0 0 ${endpointBadgeSize} ${endpointBadgeSize}"><rect width="${endpointBadgeSize}" height="${endpointBadgeSize}" rx="2" fill="${color}"/><text x="${center}" y="${center + 3}" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="600" fill="#ffffff">${label}</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+function endpointGeometry(endpoint: "start" | "end") {
+  return (feature: FeatureLike) => {
+    const geometry = feature.getGeometry();
+    if (!(geometry instanceof LineString)) return undefined;
+
+    const coordinates = geometry.getCoordinates();
+    const coordinate =
+      endpoint === "start" ? coordinates[0] : coordinates.at(-1);
+    return coordinate ? new Point(coordinate) : undefined;
+  };
 }
 
 function createBasemapLayer(basemapId: BasemapId): TileLayer<XYZ> {

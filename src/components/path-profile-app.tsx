@@ -10,7 +10,6 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
-  Check,
   Download,
   Edit3,
   FileWarning,
@@ -128,7 +127,6 @@ export function PathProfileApp() {
   const [draftProjection, setDraftProjection] = useState<string | null>(null);
   const [drawingEnabled, setDrawingEnabled] = useState(false);
   const [pathEditEnabled, setPathEditEnabled] = useState(false);
-  const [finishDrawingRequest, setFinishDrawingRequest] = useState(0);
   const [clearPathRequest, setClearPathRequest] = useState(0);
   const [restorePathRequest, setRestorePathRequest] = useState(0);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -153,8 +151,8 @@ export function PathProfileApp() {
     y: number;
   } | null>(null);
   const pathHistoryRef = useRef<PathSnapshot[]>([]);
-  const pendingGenerateAfterFinishRef = useRef(false);
   const profileRequestIdRef = useRef(0);
+  const profileRequestBusyRef = useRef(false);
   const resizeDragRef = useRef<ResizeDrag | null>(null);
 
   const pathToRestore = useMemo(
@@ -169,6 +167,16 @@ export function PathProfileApp() {
     },
     [],
   );
+
+  const invalidateProfileRequest = useCallback((clearBusy = true) => {
+    profileRequestIdRef.current += 1;
+    if (profileRequestBusyRef.current) {
+      profileRequestBusyRef.current = false;
+      if (clearBusy) {
+        setBusy(false);
+      }
+    }
+  }, []);
 
   const profileStats = useMemo(() => {
     const elevations = profilePoints
@@ -193,9 +201,10 @@ export function PathProfileApp() {
   );
 
   const currentPathSnapshot = useCallback((): PathSnapshot => {
-    if (!draftProjection || draftPath.length < 2) return null;
+    const coordinates = straightPathEndpoints(draftPath);
+    if (!draftProjection || coordinates.length < 2) return null;
     return {
-      coordinates: draftPath.map((coordinate) => [...coordinate] as Coordinate),
+      coordinates,
       projection: draftProjection,
     };
   }, [draftPath, draftProjection]);
@@ -222,6 +231,7 @@ export function PathProfileApp() {
 
       const requestId = profileRequestIdRef.current + 1;
       profileRequestIdRef.current = requestId;
+      profileRequestBusyRef.current = true;
       setBusy(true);
       setError(null);
       setStatus("Sampling profile");
@@ -245,6 +255,7 @@ export function PathProfileApp() {
         setStatus("Profile failed");
       } finally {
         if (profileRequestIdRef.current === requestId) {
+          profileRequestBusyRef.current = false;
           setBusy(false);
         }
       }
@@ -274,7 +285,7 @@ export function PathProfileApp() {
 
       setStatus("Loading DEM");
       const summary = await api.loadDsmProject(paths);
-      profileRequestIdRef.current += 1;
+      invalidateProfileRequest(false);
       setProject(summary);
       setWarnings(summary.warnings);
       setProfilePoints([]);
@@ -301,7 +312,7 @@ export function PathProfileApp() {
     } finally {
       setBusy(false);
     }
-  }, [syncLineOfSightEndpoints]);
+  }, [invalidateProfileRequest, syncLineOfSightEndpoints]);
 
   const handleExport = useCallback(async () => {
     const api = getPathProfileApi();
@@ -338,22 +349,39 @@ export function PathProfileApp() {
         }
       }
 
-      setDraftPath(coordinates);
+      const straightPath = straightPathEndpoints(coordinates);
+      if (straightPath.length < 2) {
+        setStatus("Place A, then B");
+        return;
+      }
+
+      if (sameCoordinate(straightPath[0]!, straightPath[1]!)) {
+        setDraftPath([]);
+        setDraftProjection(null);
+        setProfilePoints([]);
+        syncLineOfSightEndpoints(null);
+        setActivePoint(null);
+        invalidateProfileRequest();
+        setDrawingEnabled(false);
+        setPathEditEnabled(false);
+        setClearPathRequest((request) => request + 1);
+        setOpenPopover(null);
+        setStatus("Place B away from A");
+        return;
+      }
+
+      setDraftPath(straightPath);
       setDraftProjection(projection);
       setDrawingEnabled(false);
-      setStatus(`${coordinates.length.toLocaleString()} path vertices`);
-
-      const shouldGenerateProfile =
-        changeType === "draw" ||
-        changeType === "modify" ||
-        pendingGenerateAfterFinishRef.current;
-
-      if (shouldGenerateProfile) {
-        pendingGenerateAfterFinishRef.current = false;
-        void generateProfileForPath(coordinates, projection);
-      }
+      setStatus("A to B path");
+      void generateProfileForPath(straightPath, projection);
     },
-    [currentPathSnapshot, generateProfileForPath],
+    [
+      currentPathSnapshot,
+      generateProfileForPath,
+      invalidateProfileRequest,
+      syncLineOfSightEndpoints,
+    ],
   );
 
   const handleStartPath = useCallback(() => {
@@ -368,34 +396,15 @@ export function PathProfileApp() {
     setClearPathRequest((request) => request + 1);
     pathHistoryRef.current = [];
     setOpenPopover(null);
-    setStatus("Drawing path");
-  }, [syncLineOfSightEndpoints]);
+    setStatus("Place A, then B");
+  }, [invalidateProfileRequest, syncLineOfSightEndpoints]);
 
-  const handleSavePathAndGenerateProfile = useCallback(() => {
-    if (busy) return;
-
-    if (drawingEnabled) {
-      pendingGenerateAfterFinishRef.current = true;
-      setFinishDrawingRequest((request) => request + 1);
-      setStatus("Saving path");
-      return;
-    }
-
-    if (draftProjection && draftPath.length >= 2) {
-      void generateProfileForPath(draftPath, draftProjection);
-    }
-  }, [
-    busy,
-    draftPath,
-    draftProjection,
-    drawingEnabled,
-    generateProfileForPath,
-  ]);
-
-  const handleFinishDrawingFailed = useCallback(() => {
-    pendingGenerateAfterFinishRef.current = false;
-    setStatus("Draw at least two points");
-  }, []);
+  const handleEndPathEdit = useCallback(() => {
+    setPathEditEnabled(false);
+    setOpenPopover(null);
+    setPathContextPosition(null);
+    setStatus(draftPath.length >= 2 ? "A to B path" : "Path edit off");
+  }, [draftPath.length]);
 
   const handleCancelPath = useCallback(() => {
     const previousSnapshot = currentPathSnapshot();
@@ -403,19 +412,23 @@ export function PathProfileApp() {
       pathHistoryRef.current = [...pathHistoryRef.current, previousSnapshot];
     }
 
-    pendingGenerateAfterFinishRef.current = false;
     setDraftPath([]);
     setDraftProjection(null);
     setProfilePoints([]);
     syncLineOfSightEndpoints(null);
     setActivePoint(null);
-    profileRequestIdRef.current += 1;
+    invalidateProfileRequest();
     setDrawingEnabled(false);
     setPathEditEnabled(false);
     setClearPathRequest((request) => request + 1);
     setOpenPopover(null);
     setStatus(project ? "Path cleared" : "Idle");
-  }, [currentPathSnapshot, project, syncLineOfSightEndpoints]);
+  }, [
+    currentPathSnapshot,
+    invalidateProfileRequest,
+    project,
+    syncLineOfSightEndpoints,
+  ]);
 
   const handleUndoPath = useCallback(() => {
     const snapshot = pathHistoryRef.current.pop();
@@ -645,19 +658,13 @@ export function PathProfileApp() {
           return;
         }
         if (pathEditEnabled) {
-          setPathEditEnabled(false);
-          setStatus("Path edit off");
+          handleEndPathEdit();
         }
       }
 
       if (commandOrControl && event.key.toLowerCase() === "z") {
         event.preventDefault();
         handleUndoPath();
-      }
-
-      if (event.key === "Enter" && drawingEnabled) {
-        event.preventDefault();
-        handleSavePathAndGenerateProfile();
       }
     };
 
@@ -666,7 +673,7 @@ export function PathProfileApp() {
   }, [
     drawingEnabled,
     handleCancelPath,
-    handleSavePathAndGenerateProfile,
+    handleEndPathEdit,
     handleUndoPath,
     openPopover,
     pathEditEnabled,
@@ -689,14 +696,12 @@ export function PathProfileApp() {
           clearPathRequest={clearPathRequest}
           colorSettings={colorSettings}
           drawingEnabled={drawingEnabled}
-          finishDrawingRequest={finishDrawingRequest}
           pathEditEnabled={pathEditEnabled}
           pathToRestore={pathToRestore}
           project={project}
           restorePathRequest={restorePathRequest}
           selectedBasemap={selectedBasemap}
           onDraftPathChange={handleDraftPathChange}
-          onFinishDrawingFailed={handleFinishDrawingFailed}
           onPathContextMenu={handlePathContextMenu}
         />
 
@@ -722,35 +727,41 @@ export function PathProfileApp() {
 
           <div className="relative">
             <button
-              aria-label={drawingEnabled ? "Path drawing active" : "Draw path"}
-              aria-pressed={drawingEnabled}
-              className={`${iconButtonClass} ${drawingEnabled ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
+              aria-label={
+                pathEditEnabled
+                  ? "Path editing active"
+                  : drawingEnabled
+                    ? "Path drawing active"
+                    : "Draw path"
+              }
+              aria-pressed={drawingEnabled || pathEditEnabled}
+              className={`${iconButtonClass} ${drawingEnabled || pathEditEnabled ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
               disabled={!project || busy}
-              title="Draw path"
+              title={pathEditEnabled ? "Finish editing path" : "Draw path"}
               type="button"
-              onClick={handleStartPath}
+              onClick={pathEditEnabled ? handleEndPathEdit : handleStartPath}
             >
-              <PencilLine aria-hidden="true" className="h-5 w-5" />
+              {pathEditEnabled ? (
+                <Edit3 aria-hidden="true" className="h-5 w-5" />
+              ) : (
+                <PencilLine aria-hidden="true" className="h-5 w-5" />
+              )}
             </button>
-            {drawingEnabled ? (
+            {drawingEnabled || pathEditEnabled ? (
               <div className="absolute top-full left-0 mt-1 grid w-12 justify-items-center gap-3 rounded border border-[var(--overlay-border)] bg-[var(--overlay-bg)] py-3 shadow-sm backdrop-blur">
                 <button
-                  aria-label="Save path and generate profile"
-                  className="flex h-6 w-6 items-center justify-center text-[var(--accent)] hover:text-[var(--accent-hover)]"
-                  disabled={busy}
-                  title="Save path and generate profile"
-                  type="button"
-                  onClick={handleSavePathAndGenerateProfile}
-                >
-                  <Check aria-hidden="true" className="h-5 w-5" />
-                </button>
-                <button
-                  aria-label="Cancel path"
+                  aria-label={
+                    pathEditEnabled ? "Finish editing path" : "Cancel path"
+                  }
                   className="flex h-6 w-6 items-center justify-center text-[var(--danger)] hover:text-[var(--text-primary)]"
                   disabled={busy}
-                  title="Cancel path"
+                  title={
+                    pathEditEnabled ? "Finish editing path" : "Cancel path"
+                  }
                   type="button"
-                  onClick={handleCancelPath}
+                  onClick={
+                    pathEditEnabled ? handleEndPathEdit : handleCancelPath
+                  }
                 >
                   <X aria-hidden="true" className="h-5 w-5" />
                 </button>
@@ -906,10 +917,7 @@ export function PathProfileApp() {
             ) : null}
             {draftPath.length >= 2 ? (
               <div>
-                Path{" "}
-                <span className="text-[var(--text-primary)]">
-                  {draftPath.length.toLocaleString()} vertices
-                </span>
+                Path <span className="text-[var(--text-primary)]">A to B</span>
               </div>
             ) : null}
             {profileStats ? (
@@ -946,39 +954,54 @@ export function PathProfileApp() {
         ) : null}
 
         {openPopover === "path" && draftPath.length >= 2 ? (
-          <div
-            className="absolute z-10 grid w-44 gap-1 rounded border border-[var(--overlay-border)] bg-[var(--overlay-bg)] p-2 text-sm shadow-sm backdrop-blur"
-            style={{
-              left: pathContextPosition ? pathContextPosition.x : 64,
-              top: pathContextPosition ? pathContextPosition.y : 176,
-            }}
-          >
-            <button
-              className="flex items-center gap-2 rounded px-3 py-2 text-left hover:bg-[var(--control-bg-hover)]"
-              type="button"
-              onClick={() => {
-                setPathEditEnabled(true);
+          <>
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 z-10"
+              onContextMenu={(event) => {
+                event.preventDefault();
                 setOpenPopover(null);
                 setPathContextPosition(null);
-                setStatus("Editing path");
               }}
-            >
-              <Edit3 aria-hidden="true" className="h-4 w-4" />
-              Edit path
-            </button>
-            <button
-              className="flex items-center gap-2 rounded px-3 py-2 text-left text-[var(--danger)] hover:bg-[var(--control-bg-hover)]"
-              type="button"
-              onClick={() => {
+              onPointerDown={() => {
                 setOpenPopover(null);
                 setPathContextPosition(null);
-                handleCancelPath();
+              }}
+            />
+            <div
+              className="absolute z-20 grid w-44 gap-1 rounded border border-[var(--overlay-border)] bg-[var(--overlay-bg)] p-2 text-sm shadow-sm backdrop-blur"
+              style={{
+                left: pathContextPosition ? pathContextPosition.x : 64,
+                top: pathContextPosition ? pathContextPosition.y : 176,
               }}
             >
-              <Trash2 aria-hidden="true" className="h-4 w-4" />
-              Clear path
-            </button>
-          </div>
+              <button
+                className="flex items-center gap-2 rounded px-3 py-2 text-left hover:bg-[var(--control-bg-hover)]"
+                type="button"
+                onClick={() => {
+                  setPathEditEnabled(true);
+                  setOpenPopover(null);
+                  setPathContextPosition(null);
+                  setStatus("Editing path");
+                }}
+              >
+                <Edit3 aria-hidden="true" className="h-4 w-4" />
+                Edit path
+              </button>
+              <button
+                className="flex items-center gap-2 rounded px-3 py-2 text-left text-[var(--danger)] hover:bg-[var(--control-bg-hover)]"
+                type="button"
+                onClick={() => {
+                  setOpenPopover(null);
+                  setPathContextPosition(null);
+                  handleCancelPath();
+                }}
+              >
+                <Trash2 aria-hidden="true" className="h-4 w-4" />
+                Clear path
+              </button>
+            </div>
+          </>
         ) : null}
       </section>
 
@@ -996,92 +1019,15 @@ export function PathProfileApp() {
           onPointerMove={handleResizePointerMove}
           onPointerUp={handleResizePointerEnd}
         />
-        <div className="flex items-center justify-between gap-4 border-b border-[var(--panel-border)] px-4 py-3">
-          <div>
-            <h2 className="text-base font-semibold">Profile</h2>
-            <p className="text-xs text-[var(--text-muted)]">
-              {profileStats
-                ? `${profileStats.samples.toLocaleString()} samples`
-                : "No profile"}
-            </p>
-          </div>
-          {profileStats ? (
-            <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
-              <div>
-                <span className="text-[var(--text-muted)]">Min </span>
-                <span className="font-medium text-[var(--text-primary)]">
-                  {formatNumber(profileStats.min)}
-                </span>
-              </div>
-              <div>
-                <span className="text-[var(--text-muted)]">Max </span>
-                <span className="font-medium text-[var(--text-primary)]">
-                  {formatNumber(profileStats.max)}
-                </span>
-              </div>
-              {lineOfSightEndpoints ? (
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <label className="flex items-center gap-1 text-[var(--text-muted)]">
-                    <span>Start elev</span>
-                    <input
-                      className="h-8 w-24 rounded border border-[var(--panel-border)] bg-[var(--control-bg)] px-2 text-right text-[var(--text-primary)]"
-                      inputMode="decimal"
-                      step="any"
-                      type="number"
-                      value={lineOfSightDrafts.start}
-                      onBlur={() => handleLineOfSightDraftCommit("start")}
-                      onChange={(event) =>
-                        handleLineOfSightDraftChange(
-                          "start",
-                          event.target.value,
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.currentTarget.blur();
-                        }
-                      }}
-                    />
-                    {elevationUnit ? (
-                      <span className="text-[var(--text-muted)]">
-                        {elevationUnit}
-                      </span>
-                    ) : null}
-                  </label>
-                  <label className="flex items-center gap-1 text-[var(--text-muted)]">
-                    <span>End elev</span>
-                    <input
-                      className="h-8 w-24 rounded border border-[var(--panel-border)] bg-[var(--control-bg)] px-2 text-right text-[var(--text-primary)]"
-                      inputMode="decimal"
-                      step="any"
-                      type="number"
-                      value={lineOfSightDrafts.end}
-                      onBlur={() => handleLineOfSightDraftCommit("end")}
-                      onChange={(event) =>
-                        handleLineOfSightDraftChange("end", event.target.value)
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.currentTarget.blur();
-                        }
-                      }}
-                    />
-                    {elevationUnit ? (
-                      <span className="text-[var(--text-muted)]">
-                        {elevationUnit}
-                      </span>
-                    ) : null}
-                  </label>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
         <div className="min-h-0 flex-1 px-4">
           <ProfileChart
+            elevationUnit={elevationUnit}
             lineOfSightEndpoints={lineOfSightEndpoints}
+            lineOfSightDrafts={lineOfSightDrafts}
             points={profilePoints}
             onHoverPoint={setActivePoint}
+            onLineOfSightDraftChange={handleLineOfSightDraftChange}
+            onLineOfSightDraftCommit={handleLineOfSightDraftCommit}
             onLineOfSightEndpointChange={handleLineOfSightEndpointChange}
           />
         </div>
@@ -1137,15 +1083,29 @@ function formatNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
+function straightPathEndpoints(coordinates: Coordinate[]): Coordinate[] {
+  const first = coordinates[0];
+  const last = coordinates.at(-1);
+  if (!first || !last || coordinates.length < 2) return [];
+
+  return [
+    [first[0], first[1]],
+    [last[0], last[1]],
+  ];
+}
+
+function sameCoordinate(a: Coordinate, b: Coordinate): boolean {
+  return a[0] === b[0] && a[1] === b[1];
+}
+
 /**
- * Format an elevation value as a string rounded to three decimal places.
+ * Format an elevation value to two decimal places for compact chart controls.
  *
  * @param value - Elevation in numeric form
- * @returns The numeric value rounded to three decimal places and returned as a string
+ * @returns The numeric value rounded to two decimal places and returned as a string
  */
 function formatElevationInput(value: number): string {
-  const rounded = Math.round(value * 1000) / 1000;
-  return rounded.toString();
+  return value.toFixed(2);
 }
 
 /**
