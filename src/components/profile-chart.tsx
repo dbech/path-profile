@@ -18,6 +18,7 @@ import {
   type ChartData,
   type ChartEvent,
   type ChartOptions,
+  type Plugin,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 import {
@@ -37,16 +38,46 @@ ChartJS.register(
 );
 
 type ProfileChartProps = {
+  elevationUnit: string | null;
   lineOfSightEndpoints: LineOfSightEndpoints | null;
+  lineOfSightDrafts: LineOfSightDrafts;
   points: ProfilePoint[];
   onHoverPoint: (point: ProfilePoint | null) => void;
+  onLineOfSightDraftChange: (
+    endpointId: LineOfSightEndpointId,
+    value: string,
+  ) => void;
+  onLineOfSightDraftCommit: (endpointId: LineOfSightEndpointId) => void;
   onLineOfSightEndpointChange: (
     endpointId: LineOfSightEndpointId,
     absoluteElevation: number,
   ) => void;
 };
 
+type LineOfSightDrafts = Record<LineOfSightEndpointId, string>;
+
+type ChartBounds = {
+  controlTop: number;
+  left: number;
+  right: number;
+  width: number;
+};
+
 const endpointHitRadius = 12;
+const endpointColors: Record<LineOfSightEndpointId, string> = {
+  start: "#157b68",
+  end: "#c93d4b",
+};
+const endpointLabels: Record<LineOfSightEndpointId, "A" | "B"> = {
+  start: "A",
+  end: "B",
+};
+const endpointBadgeSize = 18;
+const endpointInputLabelWidth = 20;
+const endpointInputLabelHalfWidth = endpointInputLabelWidth / 2;
+const endpointInputFieldWidth = 56;
+const lineOfSightControlTop = 11;
+const lineOfSightEndpointDatasetLabel = "LOS endpoints";
 
 /**
  * Render an elevation vs. distance line chart with optional interactive line-of-sight endpoints.
@@ -63,12 +94,17 @@ const endpointHitRadius = 12;
  * @returns A JSX element that renders the chart and handles pointer interactions for hovering and dragging endpoints.
  */
 export function ProfileChart({
+  elevationUnit,
   lineOfSightEndpoints,
+  lineOfSightDrafts,
   points,
   onHoverPoint,
+  onLineOfSightDraftChange,
+  onLineOfSightDraftCommit,
   onLineOfSightEndpointChange,
 }: ProfileChartProps) {
   const chartRef = useRef<ChartJS<"line"> | null>(null);
+  const [chartBounds, setChartBounds] = useState<ChartBounds | null>(null);
   const [draggingEndpoint, setDraggingEndpoint] =
     useState<LineOfSightEndpointId | null>(null);
   const [hoveredEndpoint, setHoveredEndpoint] =
@@ -76,6 +112,38 @@ export function ProfileChart({
   const theme = getThemeColors();
 
   const lastDistance = points.at(-1)?.distance ?? 0;
+  const controlPositionPlugin = useMemo<Plugin<"line">>(
+    () => ({
+      id: "lineOfSightControlPositions",
+      afterLayout: (chart) => {
+        const nextBounds = {
+          controlTop: lineOfSightControlTop,
+          left: Math.round(chart.chartArea.left),
+          right: Math.round(chart.chartArea.right),
+          width: Math.round(chart.width),
+        };
+
+        if (
+          nextBounds.width <= 0 ||
+          !Number.isFinite(nextBounds.left) ||
+          !Number.isFinite(nextBounds.right)
+        ) {
+          return;
+        }
+
+        setChartBounds((current) =>
+          current &&
+          current.controlTop === nextBounds.controlTop &&
+          current.left === nextBounds.left &&
+          current.right === nextBounds.right &&
+          current.width === nextBounds.width
+            ? current
+            : nextBounds,
+        );
+      },
+    }),
+    [],
+  );
 
   const data: ChartData<"line"> = useMemo(() => {
     const datasets: ChartData<"line">["datasets"] = [
@@ -117,25 +185,32 @@ export function ProfileChart({
           tension: 0,
         })),
         {
-          label: "LOS endpoints",
+          label: lineOfSightEndpointDatasetLabel,
           data: [
             { x: 0, y: lineOfSightEndpoints.startElevation },
             { x: lastDistance, y: lineOfSightEndpoints.endElevation },
           ],
-          borderColor: theme.lineOfSightHandleBorder,
-          backgroundColor: theme.lineOfSight,
+          borderColor: "#ffffff",
+          backgroundColor: [endpointColors.start, endpointColors.end],
           borderWidth: 2,
           fill: false,
-          pointRadius: 5,
+          pointRadius: 0,
           pointHitRadius: endpointHitRadius,
-          pointHoverRadius: 7,
+          pointHoverRadius: 0,
           showLine: false,
         },
       );
     }
 
     return { datasets };
-  }, [lastDistance, lineOfSightEndpoints, points, theme]);
+  }, [
+    draggingEndpoint,
+    hoveredEndpoint,
+    lastDistance,
+    lineOfSightEndpoints,
+    points,
+    theme,
+  ]);
 
   const getEndpointAtEvent = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
@@ -264,8 +339,8 @@ export function ProfileChart({
               return `Line of sight ${elevation}`;
             }
 
-            if (label === "LOS endpoints") {
-              return `${context.dataIndex === 0 ? "Start" : "End"} ${elevation}`;
+            if (label === lineOfSightEndpointDatasetLabel) {
+              return `${context.dataIndex === 0 ? "A" : "B"} ${elevation}`;
             }
 
             return `Elevation ${elevation}`;
@@ -281,7 +356,11 @@ export function ProfileChart({
         min: 0,
         max: lastDistance,
         grid: { color: theme.grid },
-        ticks: { color: theme.textSecondary, maxTicksLimit: 6 },
+        ticks: {
+          callback: (value) => formatNumber(Number(value)),
+          color: theme.textSecondary,
+          maxTicksLimit: 6,
+        },
         title: {
           color: theme.textSecondary,
           display: true,
@@ -291,7 +370,11 @@ export function ProfileChart({
       y: {
         type: "linear",
         grid: { color: theme.grid },
-        ticks: { color: theme.textSecondary, maxTicksLimit: 6 },
+        ticks: {
+          callback: (value) => formatNumber(Number(value)),
+          color: theme.textSecondary,
+          maxTicksLimit: 6,
+        },
         title: {
           color: theme.textSecondary,
           display: true,
@@ -329,7 +412,7 @@ export function ProfileChart({
 
   return (
     <div
-      className="h-full min-h-0 py-3"
+      className="relative h-full min-h-0 pt-8 pb-3"
       style={{
         cursor: draggingEndpoint ? "grabbing" : hoveredEndpoint ? "grab" : "",
       }}
@@ -341,9 +424,180 @@ export function ProfileChart({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
     >
-      <Line ref={chartRef} data={data} options={options} />
+      {lineOfSightEndpoints && chartBounds ? (
+        <div
+          className="pointer-events-none absolute right-0 left-0 z-20 h-5"
+          style={{ top: chartBounds.controlTop }}
+        >
+          <div
+            className="pointer-events-auto absolute"
+            style={{
+              left:
+                chartBounds.left -
+                endpointInputLabelWidth +
+                endpointInputLabelHalfWidth,
+            }}
+          >
+            <LineOfSightEndpointInput
+              elevationUnit={elevationUnit}
+              endpointId="start"
+              label={endpointLabels.start}
+              value={lineOfSightDrafts.start}
+              onDraftChange={onLineOfSightDraftChange}
+              onDraftCommit={onLineOfSightDraftCommit}
+            />
+          </div>
+          <div
+            className="pointer-events-auto absolute"
+            style={{
+              left:
+                chartBounds.right -
+                endpointInputFieldWidth -
+                endpointInputLabelHalfWidth,
+            }}
+          >
+            <LineOfSightEndpointInput
+              elevationUnit={elevationUnit}
+              endpointId="end"
+              label={endpointLabels.end}
+              value={lineOfSightDrafts.end}
+              onDraftChange={onLineOfSightDraftChange}
+              onDraftCommit={onLineOfSightDraftCommit}
+            />
+          </div>
+        </div>
+      ) : null}
+      <Line
+        ref={chartRef}
+        data={data}
+        options={options}
+        plugins={[controlPositionPlugin, lineOfSightEndpointLabelPlugin]}
+      />
     </div>
   );
+}
+
+type LineOfSightEndpointInputProps = {
+  elevationUnit: string | null;
+  endpointId: LineOfSightEndpointId;
+  label: "A" | "B";
+  value: string;
+  onDraftChange: (endpointId: LineOfSightEndpointId, value: string) => void;
+  onDraftCommit: (endpointId: LineOfSightEndpointId) => void;
+};
+
+function LineOfSightEndpointInput({
+  elevationUnit,
+  endpointId,
+  label,
+  value,
+  onDraftChange,
+  onDraftCommit,
+}: LineOfSightEndpointInputProps) {
+  return (
+    <label
+      className={`flex h-5 overflow-hidden rounded-sm border border-[var(--panel-border)] bg-[var(--panel-bg)] text-xs ${endpointId === "end" ? "flex-row-reverse" : ""}`}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <span
+        className="flex h-full w-5 items-center justify-center text-[9px] font-semibold text-white"
+        style={{ backgroundColor: endpointColors[endpointId] }}
+      >
+        {label}
+      </span>
+      <span className="relative flex h-full">
+        <input
+          aria-label={`${label} line-of-sight elevation`}
+          className={`h-full w-14 border-0 bg-transparent text-xs text-[var(--text-secondary)] outline-none focus:bg-[var(--control-bg-hover)] focus:text-[var(--text-primary)] ${
+            endpointId === "start" ? "text-left" : "text-right"
+          } ${elevationUnit ? "pr-4 pl-0.5" : "px-0.5"}`}
+          inputMode="decimal"
+          type="text"
+          value={value}
+          onBlur={() => onDraftCommit(endpointId)}
+          onChange={(event) => onDraftChange(endpointId, event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        {elevationUnit ? (
+          <span className="pointer-events-none absolute top-0 right-0.5 flex h-full items-center text-[9px] text-[var(--text-muted)]">
+            {elevationUnit}
+          </span>
+        ) : null}
+      </span>
+    </label>
+  );
+}
+
+const lineOfSightEndpointLabelPlugin: Plugin<"line"> = {
+  id: "lineOfSightEndpointLabels",
+  afterDraw: (chart) => {
+    const datasetIndex = chart.data.datasets.findIndex(
+      (dataset) => dataset.label === lineOfSightEndpointDatasetLabel,
+    );
+    if (datasetIndex < 0) return;
+
+    const meta = chart.getDatasetMeta(datasetIndex);
+    const labels: ("A" | "B")[] = [endpointLabels.start, endpointLabels.end];
+    const ctx = chart.ctx;
+
+    ctx.save();
+    meta.data.forEach((element, index) => {
+      const label = labels[index];
+      if (!label) return;
+      const { x, y } = element.tooltipPosition(true);
+      if (x === null || y === null) return;
+
+      const fill =
+        label === endpointLabels.start
+          ? endpointColors.start
+          : endpointColors.end;
+      const badgeX = x - endpointBadgeSize / 2;
+      const badgeY = y - endpointBadgeSize / 2;
+      drawRoundedRect(
+        ctx,
+        badgeX,
+        badgeY,
+        endpointBadgeSize,
+        endpointBadgeSize,
+        2,
+      );
+      ctx.fillStyle = fill;
+      ctx.fill();
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "600 9px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, x, y + 0.5);
+    });
+
+    ctx.restore();
+  },
+};
+
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
 }
 
 /**
@@ -428,13 +682,16 @@ function splitVisibleLineOfSightSegments(
 }
 
 /**
- * Formats a number using the runtime locale with up to three digits after the decimal point.
+ * Formats a number using the runtime locale with exactly two digits after the decimal point.
  *
  * @param value - The number to format
- * @returns The locale-aware string representation of `value` with at most three fractional digits
+ * @returns The locale-aware string representation of `value` with exactly two fractional digits
  */
 function formatNumber(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  });
 }
 
 /**
