@@ -19,10 +19,16 @@ import {
   type ChartEvent,
   type ChartOptions,
   type Plugin,
+  type Scale,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 import {
+  DEFAULT_FRESNEL_FREQUENCY_MHZ,
+  FRESNEL_SHELL_NUMBER,
+  buildFresnelZoneShell,
+  buildVisibleFresnelZoneShellSegments,
   buildVisibleLineOfSightSegments,
+  type LineOfSightChartPoint,
   type LineOfSightEndpointId,
   type LineOfSightEndpoints,
 } from "~/lib/line-of-sight";
@@ -78,6 +84,13 @@ const endpointInputLabelHalfWidth = endpointInputLabelWidth / 2;
 const endpointInputFieldWidth = 56;
 const lineOfSightControlTop = 11;
 const lineOfSightEndpointDatasetLabel = "LOS endpoints";
+const fresnelShellHitRadius = 7;
+const fresnelFrequencyInputFieldWidth = 72;
+// Chart.js draws higher ordered datasets earlier, so these overlays sit below the elevation profile.
+const elevationDatasetOrder = 0;
+const endpointDatasetOrder = -10;
+const belowProfileOverlayDatasetOrder = 20;
+const fresnelShellDatasetOrder = 30;
 
 /**
  * Render an elevation vs. distance line chart with optional interactive line-of-sight endpoints.
@@ -109,9 +122,49 @@ export function ProfileChart({
     useState<LineOfSightEndpointId | null>(null);
   const [hoveredEndpoint, setHoveredEndpoint] =
     useState<LineOfSightEndpointId | null>(null);
+  const [fresnelFrequencyDraft, setFresnelFrequencyDraft] = useState(
+    formatFrequencyInput(DEFAULT_FRESNEL_FREQUENCY_MHZ),
+  );
+  const [fresnelFrequencyMhz, setFresnelFrequencyMhz] = useState(
+    DEFAULT_FRESNEL_FREQUENCY_MHZ,
+  );
+  const [mutedFresnelShells, setMutedFresnelShells] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const [hoveredFresnelShell, setHoveredFresnelShell] = useState<number | null>(
+    null,
+  );
   const theme = getThemeColors();
 
   const lastDistance = points.at(-1)?.distance ?? 0;
+  const fresnelShell = useMemo(
+    () =>
+      buildFresnelZoneShell(
+        points,
+        lineOfSightEndpoints,
+        fresnelFrequencyMhz,
+        FRESNEL_SHELL_NUMBER,
+      ),
+    [fresnelFrequencyMhz, lineOfSightEndpoints, points],
+  );
+  const visibleFresnelShellSegments = useMemo(
+    () =>
+      buildVisibleFresnelZoneShellSegments(
+        points,
+        lineOfSightEndpoints,
+        fresnelFrequencyMhz,
+        FRESNEL_SHELL_NUMBER,
+      ),
+    [fresnelFrequencyMhz, lineOfSightEndpoints, points],
+  );
+  const fresnelYBounds = useMemo(
+    () =>
+      chartPointYBounds(
+        ...visibleFresnelShellSegments.lower,
+        ...visibleFresnelShellSegments.upper,
+      ),
+    [visibleFresnelShellSegments],
+  );
   const controlPositionPlugin = useMemo<Plugin<"line">>(
     () => ({
       id: "lineOfSightControlPositions",
@@ -147,7 +200,6 @@ export function ProfileChart({
     }),
     [],
   );
-
   const data: ChartData<"line"> = useMemo(() => {
     const datasets: ChartData<"line">["datasets"] = [
       {
@@ -162,10 +214,53 @@ export function ProfileChart({
         pointRadius: points.length > 300 ? 0 : 1.8,
         pointHoverRadius: 4,
         fill: true,
+        order: elevationDatasetOrder,
         spanGaps: false,
         tension: 0.12,
       },
     ];
+
+    if (fresnelShell) {
+      const isMuted = mutedFresnelShells.has(fresnelShell.shellNumber);
+      const borderColor = isMuted
+        ? theme.fresnelShellMuted
+        : theme.fresnelShell;
+      const borderWidth = isMuted ? 0.85 : 1.5;
+
+      for (const segment of visibleFresnelShellSegments.upper) {
+        datasets.push({
+          label: `Fresnel zone ${fresnelShell.shellNumber} upper`,
+          data: segment,
+          borderColor,
+          backgroundColor: "transparent",
+          borderWidth,
+          fill: false,
+          order: fresnelShellDatasetOrder,
+          pointRadius: 0,
+          pointHitRadius: 0,
+          pointHoverRadius: 0,
+          spanGaps: false,
+          tension: 0,
+        });
+      }
+
+      for (const segment of visibleFresnelShellSegments.lower) {
+        datasets.push({
+          label: `Fresnel zone ${fresnelShell.shellNumber} lower`,
+          data: segment,
+          borderColor,
+          backgroundColor: "transparent",
+          borderWidth,
+          fill: false,
+          order: fresnelShellDatasetOrder,
+          pointRadius: 0,
+          pointHitRadius: 0,
+          pointHoverRadius: 0,
+          spanGaps: false,
+          tension: 0,
+        });
+      }
+    }
 
     if (lineOfSightEndpoints) {
       const lineOfSightSegments = splitVisibleLineOfSightSegments(
@@ -181,6 +276,7 @@ export function ProfileChart({
           borderDash: [7, 5],
           borderWidth: 2,
           fill: false,
+          order: belowProfileOverlayDatasetOrder,
           pointRadius: 0,
           pointHitRadius: 0,
           pointHoverRadius: 0,
@@ -197,6 +293,7 @@ export function ProfileChart({
           backgroundColor: [endpointColors.start, endpointColors.end],
           borderWidth: 2,
           fill: false,
+          order: endpointDatasetOrder,
           pointRadius: 0,
           pointHitRadius: endpointHitRadius,
           pointHoverRadius: 0,
@@ -206,7 +303,15 @@ export function ProfileChart({
     }
 
     return { datasets };
-  }, [lastDistance, lineOfSightEndpoints, points, theme]);
+  }, [
+    fresnelShell,
+    lastDistance,
+    lineOfSightEndpoints,
+    mutedFresnelShells,
+    points,
+    theme,
+    visibleFresnelShellSegments,
+  ]);
 
   const getEndpointAtEvent = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
@@ -246,6 +351,41 @@ export function ProfileChart({
     [lastDistance, lineOfSightEndpoints],
   );
 
+  const getFresnelShellAtEvent = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      const chart = chartRef.current;
+      if (!chart || !fresnelShell) return null;
+
+      const xScale = chart.scales.x;
+      const yScale = chart.scales.y;
+      if (!xScale || !yScale) return null;
+
+      const pointer = getPointerPosition(event, chart);
+      const shellHit =
+        visibleFresnelShellSegments.upper.some((segment) =>
+          isPointerNearChartLine(
+            pointer,
+            segment,
+            xScale,
+            yScale,
+            fresnelShellHitRadius,
+          ),
+        ) ||
+        visibleFresnelShellSegments.lower.some((segment) =>
+          isPointerNearChartLine(
+            pointer,
+            segment,
+            xScale,
+            yScale,
+            fresnelShellHitRadius,
+          ),
+        );
+
+      return shellHit ? fresnelShell.shellNumber : null;
+    },
+    [fresnelShell, visibleFresnelShellSegments],
+  );
+
   const updateEndpointFromPointer = useCallback(
     (
       event: PointerEvent<HTMLDivElement>,
@@ -267,18 +407,67 @@ export function ProfileChart({
     [onLineOfSightEndpointChange],
   );
 
+  const toggleFresnelShell = useCallback((shellNumber: number) => {
+    setMutedFresnelShells((current) => {
+      const next = new Set(current);
+
+      if (next.has(shellNumber)) {
+        next.delete(shellNumber);
+      } else {
+        next.add(shellNumber);
+      }
+
+      return next;
+    });
+  }, []);
+
+  const handleFresnelFrequencyDraftChange = useCallback((value: string) => {
+    setFresnelFrequencyDraft(value);
+
+    const frequencyMhz = parseFresnelFrequencyDraft(value);
+    if (frequencyMhz !== null) {
+      setFresnelFrequencyMhz(frequencyMhz);
+    }
+  }, []);
+
+  const handleFresnelFrequencyDraftCommit = useCallback(() => {
+    const frequencyMhz = parseFresnelFrequencyDraft(fresnelFrequencyDraft);
+
+    if (frequencyMhz !== null) {
+      setFresnelFrequencyMhz(frequencyMhz);
+      setFresnelFrequencyDraft(formatFrequencyInput(frequencyMhz));
+      return;
+    }
+
+    setFresnelFrequencyDraft(formatFrequencyInput(fresnelFrequencyMhz));
+  }, [fresnelFrequencyDraft, fresnelFrequencyMhz]);
+
   const handlePointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       const endpoint = getEndpointAtEvent(event);
-      if (!endpoint) return;
+      if (endpoint) {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setDraggingEndpoint(endpoint);
+        setHoveredEndpoint(endpoint);
+        setHoveredFresnelShell(null);
+        updateEndpointFromPointer(event, endpoint);
+        return;
+      }
+
+      const fresnelShellNumber = getFresnelShellAtEvent(event);
+      if (fresnelShellNumber === null) return;
 
       event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
-      setDraggingEndpoint(endpoint);
-      setHoveredEndpoint(endpoint);
-      updateEndpointFromPointer(event, endpoint);
+      setHoveredFresnelShell(fresnelShellNumber);
+      toggleFresnelShell(fresnelShellNumber);
     },
-    [getEndpointAtEvent, updateEndpointFromPointer],
+    [
+      getEndpointAtEvent,
+      getFresnelShellAtEvent,
+      toggleFresnelShell,
+      updateEndpointFromPointer,
+    ],
   );
 
   const handlePointerMove = useCallback(
@@ -289,9 +478,18 @@ export function ProfileChart({
         return;
       }
 
-      setHoveredEndpoint(getEndpointAtEvent(event));
+      const endpoint = getEndpointAtEvent(event);
+      setHoveredEndpoint(endpoint);
+      setHoveredFresnelShell(
+        endpoint === null ? getFresnelShellAtEvent(event) : null,
+      );
     },
-    [draggingEndpoint, getEndpointAtEvent, updateEndpointFromPointer],
+    [
+      draggingEndpoint,
+      getEndpointAtEvent,
+      getFresnelShellAtEvent,
+      updateEndpointFromPointer,
+    ],
   );
 
   const handlePointerEnd = useCallback(
@@ -339,6 +537,10 @@ export function ProfileChart({
               return `${context.dataIndex === 0 ? "A" : "B"} ${elevation}`;
             }
 
+            if (label?.startsWith("Fresnel zone")) {
+              return `${label} ${elevation}`;
+            }
+
             return `Elevation ${elevation}`;
           },
           title: (items) =>
@@ -366,6 +568,8 @@ export function ProfileChart({
       y: {
         type: "linear",
         grid: { color: theme.grid },
+        suggestedMax: fresnelYBounds?.max,
+        suggestedMin: fresnelYBounds?.min,
         ticks: {
           callback: (value) => formatNumber(Number(value)),
           color: theme.textSecondary,
@@ -410,12 +614,21 @@ export function ProfileChart({
     <div
       className="relative h-full min-h-0 pt-8 pb-3"
       style={{
-        cursor: draggingEndpoint ? "grabbing" : hoveredEndpoint ? "grab" : "",
+        cursor: draggingEndpoint
+          ? "grabbing"
+          : hoveredEndpoint
+            ? "grab"
+            : hoveredFresnelShell !== null
+              ? "pointer"
+              : "",
       }}
       onPointerCancel={handlePointerEnd}
       onPointerDown={handlePointerDown}
       onPointerLeave={() => {
-        if (!draggingEndpoint) setHoveredEndpoint(null);
+        if (!draggingEndpoint) {
+          setHoveredEndpoint(null);
+          setHoveredFresnelShell(null);
+        }
       }}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
@@ -443,6 +656,22 @@ export function ProfileChart({
               onDraftCommit={onLineOfSightDraftCommit}
             />
           </div>
+          {fresnelShell ? (
+            <div
+              className="pointer-events-auto absolute"
+              style={{
+                left:
+                  chartBounds.left + (chartBounds.right - chartBounds.left) / 2,
+                transform: "translateX(-50%)",
+              }}
+            >
+              <FresnelFrequencyInput
+                value={fresnelFrequencyDraft}
+                onDraftChange={handleFresnelFrequencyDraftChange}
+                onDraftCommit={handleFresnelFrequencyDraftCommit}
+              />
+            </div>
+          ) : null}
           <div
             className="pointer-events-auto absolute"
             style={{
@@ -523,6 +752,49 @@ function LineOfSightEndpointInput({
             {elevationUnit}
           </span>
         ) : null}
+      </span>
+    </label>
+  );
+}
+
+type FresnelFrequencyInputProps = {
+  value: string;
+  onDraftChange: (value: string) => void;
+  onDraftCommit: () => void;
+};
+
+function FresnelFrequencyInput({
+  value,
+  onDraftChange,
+  onDraftCommit,
+}: FresnelFrequencyInputProps) {
+  return (
+    <label
+      className="flex h-5 overflow-hidden rounded-sm border border-[var(--panel-border)] bg-[var(--panel-bg)] text-xs"
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <span className="flex h-full w-5 items-center justify-center bg-[var(--fresnel-shell)] text-[9px] font-semibold text-white">
+        F
+      </span>
+      <span className="relative flex h-full">
+        <input
+          aria-label="Fresnel frequency"
+          className="h-full border-0 bg-transparent pr-7 pl-1 text-center text-xs text-[var(--text-secondary)] outline-none focus:bg-[var(--control-bg-hover)] focus:text-[var(--text-primary)]"
+          inputMode="decimal"
+          style={{ width: fresnelFrequencyInputFieldWidth }}
+          type="text"
+          value={value}
+          onBlur={onDraftCommit}
+          onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        <span className="pointer-events-none absolute top-0 right-1 flex h-full items-center text-[9px] text-[var(--text-muted)]">
+          MHz
+        </span>
       </span>
     </label>
   );
@@ -677,6 +949,94 @@ function splitVisibleLineOfSightSegments(
   return segments;
 }
 
+function chartPointYBounds(
+  ...pointSets: (LineOfSightChartPoint[] | undefined)[]
+): { max: number; min: number } | undefined {
+  let min = Infinity;
+  let max = -Infinity;
+
+  for (const points of pointSets) {
+    for (const point of points ?? []) {
+      if (!Number.isFinite(point.y)) continue;
+      min = Math.min(min, point.y);
+      max = Math.max(max, point.y);
+    }
+  }
+
+  return min === Infinity || max === -Infinity ? undefined : { max, min };
+}
+
+function isPointerNearChartLine(
+  pointer: { x: number; y: number },
+  points: LineOfSightChartPoint[],
+  xScale: Scale,
+  yScale: Scale,
+  hitRadius: number,
+): boolean {
+  if (points.length < 2) return false;
+
+  for (let index = 1; index < points.length; index++) {
+    const previous = points[index - 1];
+    const current = points[index];
+    if (!previous || !current) continue;
+
+    const start = chartPointToPixel(previous, xScale, yScale);
+    const end = chartPointToPixel(current, xScale, yScale);
+
+    if (distanceToSegment(pointer, start, end) <= hitRadius) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function chartPointToPixel(
+  point: LineOfSightChartPoint,
+  xScale: Scale,
+  yScale: Scale,
+): { x: number; y: number } {
+  return {
+    x: xScale.getPixelForValue(point.x),
+    y: yScale.getPixelForValue(point.y),
+  };
+}
+
+function distanceToSegment(
+  point: { x: number; y: number },
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+
+  if (lengthSquared === 0) {
+    return Math.hypot(point.x - start.x, point.y - start.y);
+  }
+
+  const rawRatio =
+    ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared;
+  const ratio = Math.max(0, Math.min(1, rawRatio));
+  const projectedX = start.x + ratio * dx;
+  const projectedY = start.y + ratio * dy;
+
+  return Math.hypot(point.x - projectedX, point.y - projectedY);
+}
+
+function parseFresnelFrequencyDraft(value: string): number | null {
+  if (value.trim() === "") return null;
+  const frequencyMhz = Number(value);
+  return Number.isFinite(frequencyMhz) && frequencyMhz > 0
+    ? frequencyMhz
+    : null;
+}
+
+function formatFrequencyInput(value: number): string {
+  if (Number.isInteger(value)) return value.toFixed(0);
+  return value.toFixed(2).replace(/\.?0+$/, "");
+}
+
 /**
  * Formats a number using the runtime locale with exactly two digits after the decimal point.
  *
@@ -696,6 +1056,8 @@ function formatNumber(value: number): string {
  * @returns An object with the following CSS color string properties:
  * - `chartLine`: primary line color for the profile chart
  * - `chartFill`: fill color for the profile area beneath the line
+ * - `fresnelShell`: line color for active Fresnel shell boundaries
+ * - `fresnelShellMuted`: line color for muted Fresnel shell boundaries
  * - `grid`: grid line color
  * - `lineOfSight`: color used for line-of-sight segments
  * - `lineOfSightHandleBorder`: border color for line-of-sight endpoint handles
@@ -708,6 +1070,8 @@ function getThemeColors() {
     return {
       chartLine: "#25c2a0",
       chartFill: "rgba(37, 194, 160, 0.16)",
+      fresnelShell: "#4a90e2",
+      fresnelShellMuted: "#8fa1b3",
       grid: "rgba(143, 161, 179, 0.18)",
       lineOfSight: "#f6c445",
       lineOfSightHandleBorder: "#151d26",
@@ -719,6 +1083,8 @@ function getThemeColors() {
   return {
     chartLine: styles.getPropertyValue("--chart-line").trim(),
     chartFill: styles.getPropertyValue("--chart-fill").trim(),
+    fresnelShell: styles.getPropertyValue("--fresnel-shell").trim(),
+    fresnelShellMuted: styles.getPropertyValue("--fresnel-shell-muted").trim(),
     grid: "rgba(143, 161, 179, 0.18)",
     lineOfSight: styles.getPropertyValue("--warning").trim(),
     lineOfSightHandleBorder: styles.getPropertyValue("--panel-bg").trim(),
