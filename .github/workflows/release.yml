@@ -75,7 +75,7 @@ jobs:
 
       - name: Build Windows installer
         if: steps.version.outputs.release_exists != 'true'
-        run: bun run dist:win
+        run: bun run dist:win -- --publish never
 
       - name: Upload workflow artifact
         if: steps.version.outputs.release_exists != 'true'
