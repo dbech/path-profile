@@ -131,15 +131,18 @@ export function ProfileChart({
           return;
         }
 
-        setChartBounds((current) =>
-          current &&
-          current.controlTop === nextBounds.controlTop &&
-          current.left === nextBounds.left &&
-          current.right === nextBounds.right &&
-          current.width === nextBounds.width
-            ? current
-            : nextBounds,
-        );
+        setChartBounds((current) => {
+          if (
+            current?.controlTop === nextBounds.controlTop &&
+            current.left === nextBounds.left &&
+            current.right === nextBounds.right &&
+            current.width === nextBounds.width
+          ) {
+            return current;
+          }
+
+          return nextBounds;
+        });
       },
     }),
     [],
@@ -203,14 +206,7 @@ export function ProfileChart({
     }
 
     return { datasets };
-  }, [
-    draggingEndpoint,
-    hoveredEndpoint,
-    lastDistance,
-    lineOfSightEndpoints,
-    points,
-    theme,
-  ]);
+  }, [lastDistance, lineOfSightEndpoints, points, theme]);
 
   const getEndpointAtEvent = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {

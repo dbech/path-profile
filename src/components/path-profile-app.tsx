@@ -390,7 +390,7 @@ export function PathProfileApp() {
     setProfilePoints([]);
     syncLineOfSightEndpoints(null);
     setActivePoint(null);
-    profileRequestIdRef.current += 1;
+    invalidateProfileRequest();
     setDrawingEnabled(true);
     setPathEditEnabled(false);
     setClearPathRequest((request) => request + 1);
