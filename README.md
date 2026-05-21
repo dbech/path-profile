@@ -66,6 +66,11 @@ assets.
 
 ## Release
 
+Merging to `main` runs the GitHub Actions release workflow. The workflow reads
+`package.json` and creates a GitHub release named `v<version>` when that release
+does not already exist, so release PRs should bump the package version before
+merge.
+
 Create an unpacked Windows x64 app directory for smoke testing:
 
 ```bash
