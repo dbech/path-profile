@@ -28,6 +28,7 @@ import {
   buildFresnelZoneShell,
   buildVisibleFresnelZoneShellSegments,
   buildVisibleLineOfSightSegments,
+  type FresnelZoneUnitScales,
   type LineOfSightChartPoint,
   type LineOfSightEndpointId,
   type LineOfSightEndpoints,
@@ -45,6 +46,7 @@ ChartJS.register(
 
 type ProfileChartProps = {
   elevationUnit: string | null;
+  fresnelUnitScales: FresnelZoneUnitScales | null;
   lineOfSightEndpoints: LineOfSightEndpoints | null;
   lineOfSightDrafts: LineOfSightDrafts;
   points: ProfilePoint[];
@@ -108,6 +110,7 @@ const fresnelShellDatasetOrder = 30;
  */
 export function ProfileChart({
   elevationUnit,
+  fresnelUnitScales,
   lineOfSightEndpoints,
   lineOfSightDrafts,
   points,
@@ -139,23 +142,29 @@ export function ProfileChart({
   const lastDistance = points.at(-1)?.distance ?? 0;
   const fresnelShell = useMemo(
     () =>
-      buildFresnelZoneShell(
-        points,
-        lineOfSightEndpoints,
-        fresnelFrequencyMhz,
-        FRESNEL_SHELL_NUMBER,
-      ),
-    [fresnelFrequencyMhz, lineOfSightEndpoints, points],
+      fresnelUnitScales
+        ? buildFresnelZoneShell(
+            points,
+            lineOfSightEndpoints,
+            fresnelFrequencyMhz,
+            FRESNEL_SHELL_NUMBER,
+            fresnelUnitScales,
+          )
+        : null,
+    [fresnelFrequencyMhz, fresnelUnitScales, lineOfSightEndpoints, points],
   );
   const visibleFresnelShellSegments = useMemo(
     () =>
-      buildVisibleFresnelZoneShellSegments(
-        points,
-        lineOfSightEndpoints,
-        fresnelFrequencyMhz,
-        FRESNEL_SHELL_NUMBER,
-      ),
-    [fresnelFrequencyMhz, lineOfSightEndpoints, points],
+      fresnelUnitScales
+        ? buildVisibleFresnelZoneShellSegments(
+            points,
+            lineOfSightEndpoints,
+            fresnelFrequencyMhz,
+            FRESNEL_SHELL_NUMBER,
+            fresnelUnitScales,
+          )
+        : { lower: [], upper: [] },
+    [fresnelFrequencyMhz, fresnelUnitScales, lineOfSightEndpoints, points],
   );
   const fresnelYBounds = useMemo(
     () =>
@@ -1027,7 +1036,12 @@ function distanceToSegment(
 function parseFresnelFrequencyDraft(value: string): number | null {
   if (value.trim() === "") return null;
   const frequencyMhz = Number(value);
-  return Number.isFinite(frequencyMhz) && frequencyMhz > 0
+  const frequencyHz = frequencyMhz * 1_000_000;
+
+  return Number.isFinite(frequencyMhz) &&
+    frequencyMhz > 0 &&
+    Number.isFinite(frequencyHz) &&
+    frequencyHz > 0
     ? frequencyMhz
     : null;
 }

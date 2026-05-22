@@ -23,8 +23,18 @@ export type FresnelZoneShellSegments = {
   upper: LineOfSightChartPoint[][];
 };
 
+export type FresnelZoneUnitScales = {
+  horizontalMetersPerUnit: number;
+  verticalMetersPerUnit: number;
+};
+
 export const DEFAULT_FRESNEL_FREQUENCY_MHZ = 5800;
 export const FRESNEL_SHELL_NUMBER = 1;
+
+export const DEFAULT_FRESNEL_ZONE_UNIT_SCALES: FresnelZoneUnitScales = {
+  horizontalMetersPerUnit: 1,
+  verticalMetersPerUnit: 1,
+};
 
 const speedOfLightMetersPerSecond = 299_792_458;
 
@@ -101,12 +111,18 @@ export function fresnelRadiusAt(
 
   if (distance === 0 || distance === totalDistance) return 0;
 
-  const wavelengthMeters =
-    speedOfLightMetersPerSecond / (frequencyMhz * 1_000_000);
+  const frequencyHz = frequencyMhz * 1_000_000;
+  if (!isPositiveFinite(frequencyHz)) return null;
+
+  const wavelengthMeters = speedOfLightMetersPerSecond / frequencyHz;
   const d1 = distance;
   const d2 = totalDistance - distance;
 
-  return Math.sqrt((shellNumber * wavelengthMeters * d1 * d2) / totalDistance);
+  const radius = Math.sqrt(
+    (shellNumber * wavelengthMeters * d1 * d2) / totalDistance,
+  );
+
+  return Number.isFinite(radius) ? radius : null;
 }
 
 /**
@@ -123,6 +139,7 @@ export function buildFresnelZoneShell(
   endpoints: LineOfSightEndpoints | null,
   frequencyMhz: number,
   shellNumber = FRESNEL_SHELL_NUMBER,
+  unitScales = DEFAULT_FRESNEL_ZONE_UNIT_SCALES,
 ): FresnelZoneShell | null {
   if (!endpoints || points.length === 0) return null;
 
@@ -130,7 +147,8 @@ export function buildFresnelZoneShell(
   if (
     !isPositiveFinite(totalDistance) ||
     !isPositiveFinite(frequencyMhz) ||
-    !isPositiveFinite(shellNumber)
+    !isPositiveFinite(shellNumber) ||
+    !isValidFresnelUnitScales(unitScales)
   ) {
     return null;
   }
@@ -139,11 +157,12 @@ export function buildFresnelZoneShell(
   const lower: LineOfSightChartPoint[] = [];
 
   for (const point of points) {
-    const radius = fresnelRadiusAt(
+    const radius = fresnelRadiusForChartDistance(
       point.distance,
       totalDistance,
       frequencyMhz,
       shellNumber,
+      unitScales,
     );
 
     if (radius === null) return null;
@@ -175,6 +194,7 @@ export function buildVisibleFresnelZoneShellSegments(
   endpoints: LineOfSightEndpoints | null,
   frequencyMhz: number,
   shellNumber = FRESNEL_SHELL_NUMBER,
+  unitScales = DEFAULT_FRESNEL_ZONE_UNIT_SCALES,
 ): FresnelZoneShellSegments {
   const emptySegments: FresnelZoneShellSegments = { lower: [], upper: [] };
   if (!endpoints || points.length === 0) return emptySegments;
@@ -183,7 +203,8 @@ export function buildVisibleFresnelZoneShellSegments(
   if (
     !isPositiveFinite(totalDistance) ||
     !isPositiveFinite(frequencyMhz) ||
-    !isPositiveFinite(shellNumber)
+    !isPositiveFinite(shellNumber) ||
+    !isValidFresnelUnitScales(unitScales)
   ) {
     return emptySegments;
   }
@@ -195,6 +216,7 @@ export function buildVisibleFresnelZoneShellSegments(
       totalDistance,
       frequencyMhz,
       shellNumber,
+      unitScales,
       "lower",
     ),
     upper: buildVisibleFresnelBoundarySegments(
@@ -203,6 +225,7 @@ export function buildVisibleFresnelZoneShellSegments(
       totalDistance,
       frequencyMhz,
       shellNumber,
+      unitScales,
       "upper",
     ),
   };
@@ -374,12 +397,34 @@ function appendLineOfSightSegment(
   segments.push(segment);
 }
 
+function fresnelRadiusForChartDistance(
+  distance: number,
+  totalDistance: number,
+  frequencyMhz: number,
+  shellNumber: number,
+  unitScales: FresnelZoneUnitScales,
+): number | null {
+  if (!isValidFresnelUnitScales(unitScales)) return null;
+
+  const radiusMeters = fresnelRadiusAt(
+    distance * unitScales.horizontalMetersPerUnit,
+    totalDistance * unitScales.horizontalMetersPerUnit,
+    frequencyMhz,
+    shellNumber,
+  );
+
+  return radiusMeters === null
+    ? null
+    : radiusMeters / unitScales.verticalMetersPerUnit;
+}
+
 function buildVisibleFresnelBoundarySegments(
   points: ProfilePoint[],
   endpoints: LineOfSightEndpoints,
   totalDistance: number,
   frequencyMhz: number,
   shellNumber: number,
+  unitScales: FresnelZoneUnitScales,
   boundary: FresnelBoundary,
 ): LineOfSightChartPoint[][] {
   const first = classifyFresnelBoundaryPoint(
@@ -388,6 +433,7 @@ function buildVisibleFresnelBoundarySegments(
     totalDistance,
     frequencyMhz,
     shellNumber,
+    unitScales,
     boundary,
   );
 
@@ -403,6 +449,7 @@ function buildVisibleFresnelBoundarySegments(
       totalDistance,
       frequencyMhz,
       shellNumber,
+      unitScales,
       boundary,
     );
     const current = classifyFresnelBoundaryPoint(
@@ -411,6 +458,7 @@ function buildVisibleFresnelBoundarySegments(
       totalDistance,
       frequencyMhz,
       shellNumber,
+      unitScales,
       boundary,
     );
 
@@ -444,13 +492,15 @@ function classifyFresnelBoundaryPoint(
   totalDistance: number,
   frequencyMhz: number,
   shellNumber: number,
+  unitScales: FresnelZoneUnitScales,
   boundary: FresnelBoundary,
 ): ClassifiedPoint | null {
-  const radius = fresnelRadiusAt(
+  const radius = fresnelRadiusForChartDistance(
     point.distance,
     totalDistance,
     frequencyMhz,
     shellNumber,
+    unitScales,
   );
 
   if (radius === null) return null;
@@ -512,4 +562,11 @@ function isFiniteProfileElevation(
 
 function isPositiveFinite(value: number): boolean {
   return Number.isFinite(value) && value > 0;
+}
+
+function isValidFresnelUnitScales(unitScales: FresnelZoneUnitScales): boolean {
+  return (
+    isPositiveFinite(unitScales.horizontalMetersPerUnit) &&
+    isPositiveFinite(unitScales.verticalMetersPerUnit)
+  );
 }

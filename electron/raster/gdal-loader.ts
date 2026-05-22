@@ -22,6 +22,16 @@ type Stats = {
   std_dev?: number;
 };
 
+type GdalUnitInfo = {
+  units?: string;
+  value?: number;
+};
+
+type SpatialReferenceWithUnits = SpatialReference & {
+  getAngularUnits?: () => GdalUnitInfo;
+  getLinearUnits?: () => GdalUnitInfo;
+};
+
 export async function loadDsmProject(
   paths: string[],
 ): Promise<DsmProjectSummary> {
@@ -76,6 +86,9 @@ export async function loadDsmProject(
       projection,
     );
     const firstNoData = openedFiles[0]!.nodata;
+    const distanceUnit = distanceUnitForSrs(firstSrs);
+    const elevationUnit = firstFile.band.unitType || "unknown";
+    const elevationMetersPerUnit = metersPerElevationUnit(elevationUnit);
 
     const summary: DsmProjectSummary = {
       id: projectId,
@@ -91,10 +104,12 @@ export async function loadDsmProject(
       ),
       crsWkt: firstSrs?.toWKT() ?? "",
       epsg,
+      distance: distanceUnit,
       extent: projectExtent,
       pixelSize: firstFile.pixelSize,
       elevation: {
-        unit: firstFile.band.unitType || "unknown",
+        unit: elevationUnit,
+        metersPerUnit: elevationMetersPerUnit,
         min: projectMin,
         max: projectMax,
         ...(firstNoData === undefined ? {} : { nodata: firstNoData }),
@@ -208,6 +223,8 @@ function warningsForProject(
   sourceSrs: SpatialReference | null,
 ): string[] {
   const warnings: string[] = [];
+  const horizontalUnit = distanceUnitForSrs(sourceSrs);
+  const elevationUnit = files[0]?.band.unitType || "unknown";
 
   if (!sourceSrs) {
     warnings.push(
@@ -216,6 +233,18 @@ function warningsForProject(
   } else if (sourceSrs.isGeographic()) {
     warnings.push(
       "The DSM CRS is geographic. Profile distances are reported in degrees, not metres.",
+    );
+  }
+
+  if (horizontalUnit.metersPerUnit === null) {
+    warnings.push(
+      "Fresnel zones are hidden because the DSM horizontal unit cannot be converted to metres.",
+    );
+  }
+
+  if (metersPerElevationUnit(elevationUnit) === null) {
+    warnings.push(
+      "Fresnel zones are hidden because the DSM elevation unit cannot be converted to metres.",
     );
   }
 
@@ -237,6 +266,57 @@ function warningsForProject(
   }
 
   return warnings;
+}
+
+function distanceUnitForSrs(sourceSrs: SpatialReference | null): {
+  unit: string;
+  metersPerUnit: number | null;
+} {
+  if (!sourceSrs) return { unit: "unknown", metersPerUnit: null };
+
+  const srsWithUnits = sourceSrs as SpatialReferenceWithUnits;
+  const unitInfo = sourceSrs.isGeographic()
+    ? srsWithUnits.getAngularUnits?.()
+    : srsWithUnits.getLinearUnits?.();
+  const unit = unitInfo?.units || "unknown";
+  const metersPerUnit = sourceSrs.isGeographic()
+    ? null
+    : finitePositiveOrNull(unitInfo?.value);
+
+  return { unit, metersPerUnit };
+}
+
+function metersPerElevationUnit(unit: string): number | null {
+  const normalized = unit.trim().toLowerCase();
+  if (normalized === "" || normalized === "unknown") return null;
+
+  if (["m", "meter", "meters", "metre", "metres"].includes(normalized)) {
+    return 1;
+  }
+
+  if (
+    [
+      "ft",
+      "foot",
+      "feet",
+      "international foot",
+      "international feet",
+      "us survey foot",
+      "us survey feet",
+      "survey foot",
+      "survey feet",
+    ].includes(normalized)
+  ) {
+    return 0.3048;
+  }
+
+  return null;
+}
+
+function finitePositiveOrNull(value: number | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
 function rasterStats(band: RasterBand): Stats {

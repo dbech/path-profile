@@ -25,10 +25,15 @@ export type DsmProjectSummary = {
   files: DsmFileSummary[];
   crsWkt: string;
   epsg?: string;
+  distance: {
+    unit: string;
+    metersPerUnit: number | null;
+  };
   extent: Extent;
   pixelSize: { x: number; y: number };
   elevation: {
     unit: string;
+    metersPerUnit: number | null;
     min: number;
     max: number;
     nodata?: number;

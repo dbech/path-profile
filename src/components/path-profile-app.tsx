@@ -28,6 +28,7 @@ import { getPathProfileApi, hasDesktopBridge } from "~/lib/electron-api";
 import { exportProfileStatus } from "~/lib/export-profile-status";
 import {
   createDefaultLineOfSightEndpoints,
+  type FresnelZoneUnitScales,
   type LineOfSightEndpointId,
   type LineOfSightEndpoints,
 } from "~/lib/line-of-sight";
@@ -194,6 +195,19 @@ export function PathProfileApp() {
     project?.elevation.unit && project.elevation.unit !== "unknown"
       ? project.elevation.unit
       : null;
+  const fresnelUnitScales = useMemo<FresnelZoneUnitScales | null>(() => {
+    const horizontalMetersPerUnit = project?.distance.metersPerUnit;
+    const verticalMetersPerUnit = project?.elevation.metersPerUnit;
+
+    if (
+      !isPositiveFinite(horizontalMetersPerUnit) ||
+      !isPositiveFinite(verticalMetersPerUnit)
+    ) {
+      return null;
+    }
+
+    return { horizontalMetersPerUnit, verticalMetersPerUnit };
+  }, [project]);
 
   const noticeMessages = useMemo(
     () => (project ? warnings : ["Open a DEM from File > Open DEM..."]),
@@ -1022,6 +1036,7 @@ export function PathProfileApp() {
         <div className="min-h-0 flex-1 px-4">
           <ProfileChart
             elevationUnit={elevationUnit}
+            fresnelUnitScales={fresnelUnitScales}
             lineOfSightEndpoints={lineOfSightEndpoints}
             lineOfSightDrafts={lineOfSightDrafts}
             points={profilePoints}
@@ -1209,6 +1224,10 @@ function clamp(value: number, min: number, max: number): number {
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isPositiveFinite(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 function themeLabel(theme: ThemeMode): string {

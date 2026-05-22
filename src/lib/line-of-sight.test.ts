@@ -96,6 +96,7 @@ describe("line of sight helpers", () => {
     expect(fresnelRadiusAt(500, 1000, 0, 1)).toBeNull();
     expect(fresnelRadiusAt(500, 1000, 5800, 0)).toBeNull();
     expect(fresnelRadiusAt(1001, 1000, 5800, 1)).toBeNull();
+    expect(fresnelRadiusAt(500, 1000, Number.MIN_VALUE, 1)).toBeNull();
   });
 
   it("builds symmetric Fresnel shell lines around the line of sight", () => {
@@ -117,6 +118,19 @@ describe("line of sight helpers", () => {
     expect(shell?.lower[1]?.y).toBeCloseTo(11.41, 2);
   });
 
+  it("converts Fresnel distance and radius units for chart coordinates", () => {
+    const shell = buildFresnelZoneShell(
+      [point(0, null), point(500, null), point(1000, null)],
+      { startElevation: 10, endElevation: 20 },
+      5800,
+      1,
+      { horizontalMetersPerUnit: 0.3048, verticalMetersPerUnit: 0.3048 },
+    );
+
+    expect(shell?.upper[1]?.y).toBeCloseTo(21.51, 2);
+    expect(shell?.lower[1]?.y).toBeCloseTo(8.49, 2);
+  });
+
   it("returns null when a Fresnel shell cannot be built", () => {
     expect(
       buildFresnelZoneShell([], { startElevation: 0, endElevation: 0 }, 5800),
@@ -127,6 +141,15 @@ describe("line of sight helpers", () => {
         [point(0, null), point(1000, null)],
         { startElevation: 0, endElevation: 0 },
         -1,
+      ),
+    ).toBeNull();
+    expect(
+      buildFresnelZoneShell(
+        [point(0, null), point(1000, null)],
+        { startElevation: 0, endElevation: 0 },
+        5800,
+        1,
+        { horizontalMetersPerUnit: 0, verticalMetersPerUnit: 1 },
       ),
     ).toBeNull();
   });
@@ -188,6 +211,15 @@ describe("line of sight helpers", () => {
         { startElevation: 10, endElevation: 10 },
         5800,
         1,
+      ),
+    ).toEqual({ lower: [], upper: [] });
+    expect(
+      buildVisibleFresnelZoneShellSegments(
+        [point(0, 5), point(10, 5), point(20, 5)],
+        { startElevation: 10, endElevation: 10 },
+        5800,
+        1,
+        { horizontalMetersPerUnit: 1, verticalMetersPerUnit: Infinity },
       ),
     ).toEqual({ lower: [], upper: [] });
   });
