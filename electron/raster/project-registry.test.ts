@@ -36,7 +36,8 @@ function testProject(id: string, close: () => void): DsmProject {
     sourceSrs: null,
     summary: {
       crsWkt: "",
-      elevation: { min: 0, max: 1, unit: "unknown" },
+      distance: { metersPerUnit: null, unit: "unknown" },
+      elevation: { metersPerUnit: null, min: 0, max: 1, unit: "unknown" },
       extent: {
         minX: 0,
         minY: 0,

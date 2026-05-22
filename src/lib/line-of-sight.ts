@@ -12,6 +12,32 @@ export type LineOfSightChartPoint = {
   y: number;
 };
 
+export type FresnelZoneShell = {
+  shellNumber: number;
+  lower: LineOfSightChartPoint[];
+  upper: LineOfSightChartPoint[];
+};
+
+export type FresnelZoneShellSegments = {
+  lower: LineOfSightChartPoint[][];
+  upper: LineOfSightChartPoint[][];
+};
+
+export type FresnelZoneUnitScales = {
+  horizontalMetersPerUnit: number;
+  verticalMetersPerUnit: number;
+};
+
+export const DEFAULT_FRESNEL_FREQUENCY_MHZ = 5800;
+export const FRESNEL_SHELL_NUMBER = 1;
+
+export const DEFAULT_FRESNEL_ZONE_UNIT_SCALES: FresnelZoneUnitScales = {
+  horizontalMetersPerUnit: 1,
+  verticalMetersPerUnit: 1,
+};
+
+const speedOfLightMetersPerSecond = 299_792_458;
+
 /**
  * Derives line-of-sight endpoint elevations from the first and last finite elevations in a profile.
  *
@@ -55,6 +81,154 @@ export function lineOfSightElevationAt(
     endpoints.startElevation +
     (endpoints.endElevation - endpoints.startElevation) * ratio
   );
+}
+
+/**
+ * Compute the Fresnel zone radius at a distance along the path.
+ *
+ * @param distance - Distance from the start endpoint in metres.
+ * @param totalDistance - Total path distance in metres.
+ * @param frequencyMhz - Radio frequency in MHz.
+ * @param shellNumber - Fresnel shell number to calculate; must be positive.
+ * @returns The Fresnel radius in metres, or `null` when inputs cannot produce a meaningful shell.
+ */
+export function fresnelRadiusAt(
+  distance: number,
+  totalDistance: number,
+  frequencyMhz: number,
+  shellNumber: number,
+): number | null {
+  if (
+    !isPositiveFinite(totalDistance) ||
+    !isPositiveFinite(frequencyMhz) ||
+    !isPositiveFinite(shellNumber) ||
+    !Number.isFinite(distance) ||
+    distance < 0 ||
+    distance > totalDistance
+  ) {
+    return null;
+  }
+
+  if (distance === 0 || distance === totalDistance) return 0;
+
+  const frequencyHz = frequencyMhz * 1_000_000;
+  if (!isPositiveFinite(frequencyHz)) return null;
+
+  const wavelengthMeters = speedOfLightMetersPerSecond / frequencyHz;
+  const d1 = distance;
+  const d2 = totalDistance - distance;
+
+  const radius = Math.sqrt(
+    (shellNumber * wavelengthMeters * d1 * d2) / totalDistance,
+  );
+
+  return Number.isFinite(radius) ? radius : null;
+}
+
+/**
+ * Build upper and lower chart lines for a Fresnel shell around the line of sight.
+ *
+ * @param points - Ordered profile points whose distances determine shell samples.
+ * @param endpoints - Line-of-sight endpoint elevations.
+ * @param frequencyMhz - Radio frequency in MHz.
+ * @param shellNumber - Fresnel shell number to calculate.
+ * @returns Upper/lower shell chart points, or `null` when inputs are invalid.
+ */
+export function buildFresnelZoneShell(
+  points: ProfilePoint[],
+  endpoints: LineOfSightEndpoints | null,
+  frequencyMhz: number,
+  shellNumber = FRESNEL_SHELL_NUMBER,
+  unitScales = DEFAULT_FRESNEL_ZONE_UNIT_SCALES,
+): FresnelZoneShell | null {
+  if (!endpoints || points.length === 0) return null;
+
+  const totalDistance = points.at(-1)?.distance ?? 0;
+  if (
+    !isPositiveFinite(totalDistance) ||
+    !isPositiveFinite(frequencyMhz) ||
+    !isPositiveFinite(shellNumber) ||
+    !isValidFresnelUnitScales(unitScales)
+  ) {
+    return null;
+  }
+
+  const upper: LineOfSightChartPoint[] = [];
+  const lower: LineOfSightChartPoint[] = [];
+
+  for (const point of points) {
+    const radius = fresnelRadiusForChartDistance(
+      point.distance,
+      totalDistance,
+      frequencyMhz,
+      shellNumber,
+      unitScales,
+    );
+
+    if (radius === null) return null;
+
+    const centerElevation = lineOfSightElevationAt(
+      point.distance,
+      totalDistance,
+      endpoints,
+    );
+
+    upper.push({ x: point.distance, y: centerElevation + radius });
+    lower.push({ x: point.distance, y: centerElevation - radius });
+  }
+
+  return { shellNumber, lower, upper };
+}
+
+/**
+ * Build Fresnel shell segments from the same visible line-of-sight segments used for the LoS overlay.
+ *
+ * @param points - Ordered profile points whose distances determine shell samples.
+ * @param endpoints - Line-of-sight endpoint elevations.
+ * @param frequencyMhz - Radio frequency in MHz.
+ * @param shellNumber - Fresnel shell number to calculate.
+ * @returns Upper/lower Fresnel shell segments for visible LoS stretches.
+ */
+export function buildVisibleFresnelZoneShellSegments(
+  points: ProfilePoint[],
+  endpoints: LineOfSightEndpoints | null,
+  frequencyMhz: number,
+  shellNumber = FRESNEL_SHELL_NUMBER,
+  unitScales = DEFAULT_FRESNEL_ZONE_UNIT_SCALES,
+): FresnelZoneShellSegments {
+  const emptySegments: FresnelZoneShellSegments = { lower: [], upper: [] };
+  if (!endpoints || points.length === 0) return emptySegments;
+
+  const totalDistance = points.at(-1)?.distance ?? 0;
+  if (
+    !isPositiveFinite(totalDistance) ||
+    !isPositiveFinite(frequencyMhz) ||
+    !isPositiveFinite(shellNumber) ||
+    !isValidFresnelUnitScales(unitScales)
+  ) {
+    return emptySegments;
+  }
+
+  return {
+    lower: buildVisibleFresnelBoundarySegments(
+      points,
+      endpoints,
+      totalDistance,
+      frequencyMhz,
+      shellNumber,
+      unitScales,
+      "lower",
+    ),
+    upper: buildVisibleFresnelBoundarySegments(
+      points,
+      endpoints,
+      totalDistance,
+      frequencyMhz,
+      shellNumber,
+      unitScales,
+      "upper",
+    ),
+  };
 }
 
 /**
@@ -111,6 +285,8 @@ type ClassifiedPoint = {
   linePoint: LineOfSightChartPoint;
   visible: boolean;
 };
+
+type FresnelBoundary = "lower" | "upper";
 
 /**
  * Classifies a profile point relative to the line of sight at the point's distance.
@@ -192,6 +368,178 @@ function appendLineOfSightPoint(
   points.push(point);
 }
 
+function splitLineOfSightSegments(
+  points: (LineOfSightChartPoint | null)[],
+): LineOfSightChartPoint[][] {
+  const segments: LineOfSightChartPoint[][] = [];
+  let currentSegment: LineOfSightChartPoint[] = [];
+
+  for (const point of points) {
+    if (point === null) {
+      appendLineOfSightSegment(segments, currentSegment);
+      currentSegment = [];
+      continue;
+    }
+
+    currentSegment.push(point);
+  }
+
+  appendLineOfSightSegment(segments, currentSegment);
+
+  return segments;
+}
+
+function appendLineOfSightSegment(
+  segments: LineOfSightChartPoint[][],
+  segment: LineOfSightChartPoint[],
+): void {
+  if (segment.length < 2) return;
+  segments.push(segment);
+}
+
+function fresnelRadiusForChartDistance(
+  distance: number,
+  totalDistance: number,
+  frequencyMhz: number,
+  shellNumber: number,
+  unitScales: FresnelZoneUnitScales,
+): number | null {
+  if (!isValidFresnelUnitScales(unitScales)) return null;
+
+  const radiusMeters = fresnelRadiusAt(
+    distance * unitScales.horizontalMetersPerUnit,
+    totalDistance * unitScales.horizontalMetersPerUnit,
+    frequencyMhz,
+    shellNumber,
+  );
+
+  return radiusMeters === null
+    ? null
+    : radiusMeters / unitScales.verticalMetersPerUnit;
+}
+
+function buildVisibleFresnelBoundarySegments(
+  points: ProfilePoint[],
+  endpoints: LineOfSightEndpoints,
+  totalDistance: number,
+  frequencyMhz: number,
+  shellNumber: number,
+  unitScales: FresnelZoneUnitScales,
+  boundary: FresnelBoundary,
+): LineOfSightChartPoint[][] {
+  const first = classifyFresnelBoundaryPoint(
+    points[0]!,
+    endpoints,
+    totalDistance,
+    frequencyMhz,
+    shellNumber,
+    unitScales,
+    boundary,
+  );
+
+  if (!first) return [];
+
+  const output: (LineOfSightChartPoint | null)[] = [];
+  appendLineOfSightPoint(output, first.visible ? first.linePoint : null);
+
+  for (let index = 1; index < points.length; index++) {
+    const previous = classifyFresnelBoundaryPoint(
+      points[index - 1]!,
+      endpoints,
+      totalDistance,
+      frequencyMhz,
+      shellNumber,
+      unitScales,
+      boundary,
+    );
+    const current = classifyFresnelBoundaryPoint(
+      points[index]!,
+      endpoints,
+      totalDistance,
+      frequencyMhz,
+      shellNumber,
+      unitScales,
+      boundary,
+    );
+
+    if (!previous || !current) return [];
+
+    if (previous.kind === "gap" || current.kind === "gap") {
+      appendLineOfSightPoint(output, null);
+      appendLineOfSightPoint(
+        output,
+        current.visible ? current.linePoint : null,
+      );
+      continue;
+    }
+
+    if (previous.visible !== current.visible) {
+      appendLineOfSightPoint(
+        output,
+        fresnelBoundaryCrossingPoint(previous, current),
+      );
+    }
+
+    appendLineOfSightPoint(output, current.visible ? current.linePoint : null);
+  }
+
+  return splitLineOfSightSegments(output);
+}
+
+function classifyFresnelBoundaryPoint(
+  point: ProfilePoint,
+  endpoints: LineOfSightEndpoints,
+  totalDistance: number,
+  frequencyMhz: number,
+  shellNumber: number,
+  unitScales: FresnelZoneUnitScales,
+  boundary: FresnelBoundary,
+): ClassifiedPoint | null {
+  const radius = fresnelRadiusForChartDistance(
+    point.distance,
+    totalDistance,
+    frequencyMhz,
+    shellNumber,
+    unitScales,
+  );
+
+  if (radius === null) return null;
+
+  const centerElevation = lineOfSightElevationAt(
+    point.distance,
+    totalDistance,
+    endpoints,
+  );
+  const boundaryElevation =
+    boundary === "upper" ? centerElevation + radius : centerElevation - radius;
+  const hasTerrain = Number.isFinite(point.elevation);
+  const delta = hasTerrain ? boundaryElevation - point.elevation! : null;
+
+  return {
+    distance: point.distance,
+    delta,
+    kind: hasTerrain ? "finite" : "gap",
+    linePoint: { x: point.distance, y: boundaryElevation },
+    visible: delta === null ? false : delta > 0,
+  };
+}
+
+function fresnelBoundaryCrossingPoint(
+  start: ClassifiedPoint,
+  end: ClassifiedPoint,
+): LineOfSightChartPoint {
+  const startDelta = start.delta ?? 0;
+  const endDelta = end.delta ?? 0;
+  const denominator = startDelta - endDelta;
+  const rawRatio = denominator === 0 ? 0 : startDelta / denominator;
+  const ratio = Math.max(0, Math.min(1, rawRatio));
+  const distance = start.distance + (end.distance - start.distance) * ratio;
+  const elevation =
+    start.linePoint.y + (end.linePoint.y - start.linePoint.y) * ratio;
+
+  return { x: distance, y: elevation };
+}
+
 function findLastFiniteElevation(points: ProfilePoint[]): number | undefined {
   for (let index = points.length - 1; index >= 0; index--) {
     const point = points[index];
@@ -210,4 +558,15 @@ function isFiniteProfileElevation(
   point: ProfilePoint,
 ): point is ProfilePoint & { elevation: number } {
   return Number.isFinite(point.elevation);
+}
+
+function isPositiveFinite(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+function isValidFresnelUnitScales(unitScales: FresnelZoneUnitScales): boolean {
+  return (
+    isPositiveFinite(unitScales.horizontalMetersPerUnit) &&
+    isPositiveFinite(unitScales.verticalMetersPerUnit)
+  );
 }

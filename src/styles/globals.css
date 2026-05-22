@@ -78,6 +78,8 @@ select {
   --disabled-text: #7c8b9a;
   --chart-line: #157b68;
   --chart-fill: rgba(21, 123, 104, 0.16);
+  --fresnel-shell: #2f80ed;
+  --fresnel-shell-muted: #8796a8;
   --map-empty-bg: #e9eef3;
 }
 
@@ -101,6 +103,8 @@ select {
     --disabled-text: #788896;
     --chart-line: #25c2a0;
     --chart-fill: rgba(37, 194, 160, 0.16);
+    --fresnel-shell: #74a9ff;
+    --fresnel-shell-muted: #8fa1b3;
     --map-empty-bg: #101418;
   }
 }
@@ -124,6 +128,8 @@ select {
   --disabled-text: #788896;
   --chart-line: #25c2a0;
   --chart-fill: rgba(37, 194, 160, 0.16);
+  --fresnel-shell: #74a9ff;
+  --fresnel-shell-muted: #8fa1b3;
   --map-empty-bg: #101418;
 }
 
@@ -146,6 +152,8 @@ select {
   --disabled-text: #7c8b9a;
   --chart-line: #157b68;
   --chart-fill: rgba(21, 123, 104, 0.16);
+  --fresnel-shell: #2f80ed;
+  --fresnel-shell-muted: #8796a8;
   --map-empty-bg: #e9eef3;
 }
 
@@ -168,5 +176,7 @@ select {
   --disabled-text: #b8b8b8;
   --chart-line: #00e5ff;
   --chart-fill: rgba(0, 229, 255, 0.18);
+  --fresnel-shell: #ff6bd6;
+  --fresnel-shell-muted: #d0d0d0;
   --map-empty-bg: #050505;
 }
