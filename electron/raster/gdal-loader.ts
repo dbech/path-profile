@@ -242,7 +242,11 @@ function warningsForProject(
     );
   }
 
-  if (metersPerElevationUnit(elevationUnit) === null) {
+  if (isUnknownElevationUnit(elevationUnit)) {
+    warnings.push(
+      "The DSM elevation unit is unknown. Fresnel zones assume elevation values are metres.",
+    );
+  } else if (metersPerElevationUnit(elevationUnit) === null) {
     warnings.push(
       "Fresnel zones are hidden because the DSM elevation unit cannot be converted to metres.",
     );
@@ -288,7 +292,7 @@ function distanceUnitForSrs(sourceSrs: SpatialReference | null): {
 
 function metersPerElevationUnit(unit: string): number | null {
   const normalized = unit.trim().toLowerCase();
-  if (normalized === "" || normalized === "unknown") return null;
+  if (isUnknownElevationUnit(normalized)) return 1;
 
   if (["m", "meter", "meters", "metre", "metres"].includes(normalized)) {
     return 1;
@@ -311,6 +315,11 @@ function metersPerElevationUnit(unit: string): number | null {
   }
 
   return null;
+}
+
+function isUnknownElevationUnit(unit: string): boolean {
+  const normalized = unit.trim().toLowerCase();
+  return normalized === "" || normalized === "unknown";
 }
 
 function finitePositiveOrNull(value: number | undefined): number | null {
