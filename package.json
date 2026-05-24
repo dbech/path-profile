@@ -1,6 +1,6 @@
 {
   "name": "path-profile",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
