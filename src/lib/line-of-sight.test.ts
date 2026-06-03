@@ -138,6 +138,23 @@ describe("line of sight helpers", () => {
     expect(adjusted.at(-1)).toEqual({ x: 10_000, y: 10 });
   });
 
+  it("clips sparse curvature-adjusted line-of-sight samples after densifying terrain", () => {
+    const adjusted = buildVisibleLineOfSightSegments(
+      [point(0, 9), point(10_000, 9)],
+      { startElevation: 10, endElevation: 10 },
+      "curvature-adjusted",
+    );
+    const midpoint = adjusted.find(
+      (sample): sample is { x: number; y: number } =>
+        sample !== null && sample.x === 5_000,
+    );
+
+    expect(adjusted[0]).toEqual({ x: 0, y: 10 });
+    expect(adjusted).toContain(null);
+    expect(adjusted.at(-1)).toEqual({ x: 10_000, y: 10 });
+    expect(midpoint).toBeUndefined();
+  });
+
   it("adds interior samples to render sparse curvature-adjusted line of sight as a curve", () => {
     const adjusted = buildVisibleLineOfSightSegments(
       [point(0, 0), point(10_000, 0)],
@@ -315,6 +332,24 @@ describe("line of sight helpers", () => {
     expect(flatSegments.lower).toHaveLength(1);
     expect(adjustedSegments.lower).toHaveLength(2);
     expect(adjustedSegments.upper).toHaveLength(1);
+  });
+
+  it("clips sparse curvature-adjusted Fresnel boundary samples after densifying terrain", () => {
+    const adjustedSegments = buildVisibleFresnelZoneShellSegments(
+      [point(0, -2), point(10_000, -2)],
+      { startElevation: 10, endElevation: 10 },
+      5800,
+      1,
+      undefined,
+      "curvature-adjusted",
+    );
+    const lowerMidpoint = adjustedSegments.lower
+      .flat()
+      .find((sample) => sample.x === 5_000);
+
+    expect(adjustedSegments.lower).toHaveLength(2);
+    expect(adjustedSegments.upper).toHaveLength(1);
+    expect(lowerMidpoint).toBeUndefined();
   });
 
   it("adds interior samples to render sparse curvature-adjusted Fresnel boundaries as curves", () => {

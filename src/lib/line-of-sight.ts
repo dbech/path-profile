@@ -305,9 +305,13 @@ export function buildVisibleLineOfSightSegments(
   if (!endpoints || points.length === 0) return [];
 
   const lastDistance = points.at(-1)?.distance ?? 0;
+  const profilePoints =
+    adjustment === "curvature-adjusted"
+      ? densifyProfilePointsForCurvature(points, lastDistance)
+      : points;
   const output: (LineOfSightChartPoint | null)[] = [];
   const first = classifyPoint(
-    points[0]!,
+    profilePoints[0]!,
     lastDistance,
     endpoints,
     adjustment,
@@ -317,16 +321,16 @@ export function buildVisibleLineOfSightSegments(
 
   appendLineOfSightPoint(output, first.visible ? first.linePoint : null);
 
-  for (let index = 1; index < points.length; index++) {
+  for (let index = 1; index < profilePoints.length; index++) {
     const previous = classifyPoint(
-      points[index - 1]!,
+      profilePoints[index - 1]!,
       lastDistance,
       endpoints,
       adjustment,
       unitScales,
     );
     const current = classifyPoint(
-      points[index]!,
+      profilePoints[index]!,
       lastDistance,
       endpoints,
       adjustment,
@@ -351,9 +355,7 @@ export function buildVisibleLineOfSightSegments(
     appendLineOfSightPoint(output, current.visible ? current.linePoint : null);
   }
 
-  return adjustment === "curvature-adjusted"
-    ? densifyLineOfSightPoints(output, lastDistance, endpoints, unitScales)
-    : output;
+  return output;
 }
 
 type ClassifiedPoint = {
@@ -507,8 +509,12 @@ function buildVisibleFresnelBoundarySegments(
   adjustment: LineOfSightAdjustment,
   boundary: FresnelBoundary,
 ): LineOfSightChartPoint[][] {
+  const profilePoints =
+    adjustment === "curvature-adjusted"
+      ? densifyProfilePointsForCurvature(points, totalDistance)
+      : points;
   const first = classifyFresnelBoundaryPoint(
-    points[0]!,
+    profilePoints[0]!,
     endpoints,
     totalDistance,
     frequencyMhz,
@@ -523,9 +529,9 @@ function buildVisibleFresnelBoundarySegments(
   const output: (LineOfSightChartPoint | null)[] = [];
   appendLineOfSightPoint(output, first.visible ? first.linePoint : null);
 
-  for (let index = 1; index < points.length; index++) {
+  for (let index = 1; index < profilePoints.length; index++) {
     const previous = classifyFresnelBoundaryPoint(
-      points[index - 1]!,
+      profilePoints[index - 1]!,
       endpoints,
       totalDistance,
       frequencyMhz,
@@ -535,7 +541,7 @@ function buildVisibleFresnelBoundarySegments(
       boundary,
     );
     const current = classifyFresnelBoundaryPoint(
-      points[index]!,
+      profilePoints[index]!,
       endpoints,
       totalDistance,
       frequencyMhz,
@@ -566,19 +572,7 @@ function buildVisibleFresnelBoundarySegments(
     appendLineOfSightPoint(output, current.visible ? current.linePoint : null);
   }
 
-  const segments = splitLineOfSightSegments(output);
-
-  return adjustment === "curvature-adjusted"
-    ? densifyFresnelBoundarySegments(
-        segments,
-        endpoints,
-        totalDistance,
-        frequencyMhz,
-        shellNumber,
-        unitScales,
-        boundary,
-      )
-    : segments;
+  return splitLineOfSightSegments(output);
 }
 
 function classifyFresnelBoundaryPoint(
@@ -640,122 +634,46 @@ function fresnelBoundaryCrossingPoint(
   return { x: distance, y: elevation };
 }
 
-function densifyLineOfSightPoints(
-  points: (LineOfSightChartPoint | null)[],
+function densifyProfilePointsForCurvature(
+  points: ProfilePoint[],
   totalDistance: number,
-  endpoints: LineOfSightEndpoints,
-  unitScales: FresnelZoneUnitScales,
-): (LineOfSightChartPoint | null)[] {
-  return densifyNullableChartPoints(points, totalDistance, (distance) =>
-    lineOfSightChartPointAt(
-      distance,
-      totalDistance,
-      endpoints,
-      "curvature-adjusted",
-      unitScales,
-    ),
-  );
-}
+): ProfilePoint[] {
+  if (!isPositiveFinite(totalDistance) || points.length < 2) return points;
 
-function densifyFresnelBoundarySegments(
-  segments: LineOfSightChartPoint[][],
-  endpoints: LineOfSightEndpoints,
-  totalDistance: number,
-  frequencyMhz: number,
-  shellNumber: number,
-  unitScales: FresnelZoneUnitScales,
-  boundary: FresnelBoundary,
-): LineOfSightChartPoint[][] {
-  return segments.map((segment) =>
-    densifyChartSegment(segment, totalDistance, (distance) =>
-      fresnelBoundaryChartPointAt(
-        distance,
-        endpoints,
-        totalDistance,
-        frequencyMhz,
-        shellNumber,
-        unitScales,
-        boundary,
-      ),
-    ),
-  );
-}
+  const output: ProfilePoint[] = [];
 
-function densifyNullableChartPoints(
-  points: (LineOfSightChartPoint | null)[],
-  totalDistance: number,
-  pointAt: (distance: number) => LineOfSightChartPoint | null,
-): (LineOfSightChartPoint | null)[] {
-  const output: (LineOfSightChartPoint | null)[] = [];
-  let previous: LineOfSightChartPoint | null = null;
-
-  for (const point of points) {
-    if (point === null) {
-      appendLineOfSightPoint(output, null);
-      previous = null;
-      continue;
-    }
-
-    if (previous) {
-      appendInteriorSamples(
-        output,
-        previous.x,
-        point.x,
-        totalDistance,
-        pointAt,
-      );
-    }
-
-    appendLineOfSightPoint(output, point);
-    previous = point;
-  }
-
-  return output;
-}
-
-function densifyChartSegment(
-  segment: LineOfSightChartPoint[],
-  totalDistance: number,
-  pointAt: (distance: number) => LineOfSightChartPoint | null,
-): LineOfSightChartPoint[] {
-  const output: LineOfSightChartPoint[] = [];
-
-  for (const point of segment) {
-    const previous = output.at(-1) ?? null;
-
-    if (previous) {
-      appendInteriorSamples(
-        output,
-        previous.x,
-        point.x,
-        totalDistance,
-        pointAt,
-      );
-    }
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index];
+    if (!point) continue;
 
     output.push(point);
+
+    const nextPoint = points[index + 1];
+    if (!nextPoint) continue;
+
+    appendInteriorProfilePoints(output, point, nextPoint, totalDistance);
   }
 
   return output;
 }
 
-function appendInteriorSamples(
-  output: (LineOfSightChartPoint | null)[],
-  startDistance: number,
-  endDistance: number,
+function appendInteriorProfilePoints(
+  output: ProfilePoint[],
+  start: ProfilePoint,
+  end: ProfilePoint,
   totalDistance: number,
-  pointAt: (distance: number) => LineOfSightChartPoint | null,
 ): void {
   if (
-    !isPositiveFinite(totalDistance) ||
-    !Number.isFinite(startDistance) ||
-    !Number.isFinite(endDistance) ||
-    startDistance === endDistance
+    !Number.isFinite(start.distance) ||
+    !Number.isFinite(end.distance) ||
+    !Number.isFinite(start.elevation) ||
+    !Number.isFinite(end.elevation) ||
+    start.distance === end.distance
   ) {
     return;
   }
 
-  const distanceDelta = endDistance - startDistance;
+  const distanceDelta = end.distance - start.distance;
   const sampleStep = totalDistance / curvatureAdjustedSampleCount;
   const sampleCount = Math.max(
     1,
@@ -763,13 +681,14 @@ function appendInteriorSamples(
   );
 
   for (let sampleIndex = 1; sampleIndex < sampleCount; sampleIndex++) {
-    const distance =
-      startDistance + (distanceDelta * sampleIndex) / sampleCount;
-    const point = pointAt(distance);
+    const ratio = sampleIndex / sampleCount;
 
-    if (point) {
-      output.push(point);
-    }
+    output.push({
+      distance: start.distance + distanceDelta * ratio,
+      elevation: start.elevation! + (end.elevation! - start.elevation!) * ratio,
+      x: start.x + (end.x - start.x) * ratio,
+      y: start.y + (end.y - start.y) * ratio,
+    });
   }
 }
 
@@ -789,41 +708,6 @@ function lineOfSightChartPointAt(
   );
 
   return elevation === null ? null : { x: distance, y: elevation };
-}
-
-function fresnelBoundaryChartPointAt(
-  distance: number,
-  endpoints: LineOfSightEndpoints,
-  totalDistance: number,
-  frequencyMhz: number,
-  shellNumber: number,
-  unitScales: FresnelZoneUnitScales,
-  boundary: FresnelBoundary,
-): LineOfSightChartPoint | null {
-  const radius = fresnelRadiusForChartDistance(
-    distance,
-    totalDistance,
-    frequencyMhz,
-    shellNumber,
-    unitScales,
-  );
-  const centerElevation = lineOfSightElevationForAdjustment(
-    distance,
-    totalDistance,
-    endpoints,
-    "curvature-adjusted",
-    unitScales,
-  );
-
-  if (radius === null || centerElevation === null) return null;
-
-  return {
-    x: distance,
-    y:
-      boundary === "upper"
-        ? centerElevation + radius
-        : centerElevation - radius,
-  };
 }
 
 function lineOfSightElevationForAdjustment(
