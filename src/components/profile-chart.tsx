@@ -24,12 +24,13 @@ import {
 import { Line } from "react-chartjs-2";
 import {
   DEFAULT_FRESNEL_FREQUENCY_MHZ,
-  FRESNEL_SHELL_NUMBER,
-  buildFresnelZoneShell,
+  FRESNEL_SHELL_NUMBERS,
   buildVisibleFresnelZoneShellSegments,
   buildVisibleLineOfSightSegments,
+  type FresnelZoneShellSegments,
   type FresnelZoneUnitScales,
   type LineOfSightChartPoint,
+  type LineOfSightAdjustment,
   type LineOfSightEndpointId,
   type LineOfSightEndpoints,
 } from "~/lib/line-of-sight";
@@ -71,6 +72,17 @@ type ChartBounds = {
   width: number;
 };
 
+type LineOfSightOverlay = {
+  adjustment: LineOfSightAdjustment;
+  segments: LineOfSightChartPoint[][];
+};
+
+type FresnelShellOverlay = {
+  adjustment: LineOfSightAdjustment;
+  segments: FresnelZoneShellSegments;
+  shellNumber: number;
+};
+
 const endpointHitRadius = 12;
 const endpointColors: Record<LineOfSightEndpointId, string> = {
   start: "#157b68",
@@ -88,11 +100,15 @@ const lineOfSightControlTop = 11;
 const lineOfSightEndpointDatasetLabel = "LOS endpoints";
 const fresnelShellHitRadius = 7;
 const fresnelFrequencyInputFieldWidth = 72;
+const adjustedLineAlpha = 0.48;
+const adjustedMutedLineAlpha = 0.32;
 // Chart.js draws higher ordered datasets earlier, so these overlays sit below the elevation profile.
 const elevationDatasetOrder = 0;
 const endpointDatasetOrder = -10;
 const belowProfileOverlayDatasetOrder = 20;
+const adjustedBelowProfileOverlayDatasetOrder = 19;
 const fresnelShellDatasetOrder = 30;
+const adjustedFresnelShellDatasetOrder = 29;
 
 /**
  * Render an elevation vs. distance line chart with optional interactive line-of-sight endpoints.
@@ -140,40 +156,75 @@ export function ProfileChart({
   const theme = getThemeColors();
 
   const lastDistance = points.at(-1)?.distance ?? 0;
-  const fresnelShell = useMemo(
-    () =>
-      fresnelUnitScales
-        ? buildFresnelZoneShell(
+  const lineOfSightOverlays = useMemo<LineOfSightOverlay[]>(() => {
+    if (!lineOfSightEndpoints) return [];
+
+    const overlays: LineOfSightOverlay[] = [
+      {
+        adjustment: "flat",
+        segments: splitVisibleLineOfSightSegments(
+          buildVisibleLineOfSightSegments(points, lineOfSightEndpoints),
+        ),
+      },
+    ];
+
+    if (fresnelUnitScales) {
+      overlays.push({
+        adjustment: "curvature-adjusted",
+        segments: splitVisibleLineOfSightSegments(
+          buildVisibleLineOfSightSegments(
             points,
             lineOfSightEndpoints,
-            fresnelFrequencyMhz,
-            FRESNEL_SHELL_NUMBER,
+            "curvature-adjusted",
             fresnelUnitScales,
-          )
-        : null,
-    [fresnelFrequencyMhz, fresnelUnitScales, lineOfSightEndpoints, points],
-  );
-  const visibleFresnelShellSegments = useMemo(
-    () =>
-      fresnelUnitScales
-        ? buildVisibleFresnelZoneShellSegments(
-            points,
-            lineOfSightEndpoints,
-            fresnelFrequencyMhz,
-            FRESNEL_SHELL_NUMBER,
-            fresnelUnitScales,
-          )
-        : { lower: [], upper: [] },
-    [fresnelFrequencyMhz, fresnelUnitScales, lineOfSightEndpoints, points],
-  );
+          ),
+        ),
+      });
+    }
+
+    return overlays;
+  }, [fresnelUnitScales, lineOfSightEndpoints, points]);
+  const fresnelShellOverlays = useMemo<FresnelShellOverlay[]>(() => {
+    if (!fresnelUnitScales || !lineOfSightEndpoints) return [];
+
+    return FRESNEL_SHELL_NUMBERS.flatMap((shellNumber) => [
+      {
+        adjustment: "flat" as const,
+        segments: buildVisibleFresnelZoneShellSegments(
+          points,
+          lineOfSightEndpoints,
+          fresnelFrequencyMhz,
+          shellNumber,
+          fresnelUnitScales,
+        ),
+        shellNumber,
+      },
+      {
+        adjustment: "curvature-adjusted" as const,
+        segments: buildVisibleFresnelZoneShellSegments(
+          points,
+          lineOfSightEndpoints,
+          fresnelFrequencyMhz,
+          shellNumber,
+          fresnelUnitScales,
+          "curvature-adjusted",
+        ),
+        shellNumber,
+      },
+    ]);
+  }, [fresnelFrequencyMhz, fresnelUnitScales, lineOfSightEndpoints, points]);
   const fresnelYBounds = useMemo(
     () =>
       chartPointYBounds(
-        ...visibleFresnelShellSegments.lower,
-        ...visibleFresnelShellSegments.upper,
+        ...lineOfSightOverlays.flatMap((overlay) => overlay.segments),
+        ...fresnelShellOverlays.flatMap((overlay) => [
+          ...overlay.segments.lower,
+          ...overlay.segments.upper,
+        ]),
       ),
-    [visibleFresnelShellSegments],
+    [fresnelShellOverlays, lineOfSightOverlays],
   );
+  const showFresnelFrequencyInput = fresnelShellOverlays.length > 0;
   const controlPositionPlugin = useMemo<Plugin<"line">>(
     () => ({
       id: "lineOfSightControlPositions",
@@ -229,22 +280,35 @@ export function ProfileChart({
       },
     ];
 
-    if (fresnelShell) {
-      const isMuted = mutedFresnelShells.has(fresnelShell.shellNumber);
-      const borderColor = isMuted
-        ? theme.fresnelShellMuted
-        : theme.fresnelShell;
-      const borderWidth = isMuted ? 0.85 : 1.5;
+    for (const overlay of fresnelShellOverlays) {
+      const isMuted = mutedFresnelShells.has(overlay.shellNumber);
+      const isAdjusted = overlay.adjustment === "curvature-adjusted";
+      const baseColor = isMuted ? theme.fresnelShellMuted : theme.fresnelShell;
+      const borderColor = isAdjusted
+        ? colorWithAlpha(
+            baseColor,
+            isMuted ? adjustedMutedLineAlpha : adjustedLineAlpha,
+          )
+        : baseColor;
+      const borderWidth = isMuted ? 0.85 : isAdjusted ? 1.1 : 1.5;
+      const borderDash = isAdjusted ? [3, 5] : undefined;
+      const labelPrefix =
+        overlay.adjustment === "curvature-adjusted"
+          ? `Fresnel zone ${overlay.shellNumber} adjusted`
+          : `Fresnel zone ${overlay.shellNumber}`;
 
-      for (const segment of visibleFresnelShellSegments.upper) {
+      for (const segment of overlay.segments.upper) {
         datasets.push({
-          label: `Fresnel zone ${fresnelShell.shellNumber} upper`,
+          label: `${labelPrefix} upper`,
           data: segment,
           borderColor,
           backgroundColor: "transparent",
+          borderDash,
           borderWidth,
           fill: false,
-          order: fresnelShellDatasetOrder,
+          order: isAdjusted
+            ? adjustedFresnelShellDatasetOrder
+            : fresnelShellDatasetOrder,
           pointRadius: 0,
           pointHitRadius: 0,
           pointHoverRadius: 0,
@@ -253,15 +317,18 @@ export function ProfileChart({
         });
       }
 
-      for (const segment of visibleFresnelShellSegments.lower) {
+      for (const segment of overlay.segments.lower) {
         datasets.push({
-          label: `Fresnel zone ${fresnelShell.shellNumber} lower`,
+          label: `${labelPrefix} lower`,
           data: segment,
           borderColor,
           backgroundColor: "transparent",
+          borderDash,
           borderWidth,
           fill: false,
-          order: fresnelShellDatasetOrder,
+          order: isAdjusted
+            ? adjustedFresnelShellDatasetOrder
+            : fresnelShellDatasetOrder,
           pointRadius: 0,
           pointHitRadius: 0,
           pointHoverRadius: 0,
@@ -272,26 +339,32 @@ export function ProfileChart({
     }
 
     if (lineOfSightEndpoints) {
-      const lineOfSightSegments = splitVisibleLineOfSightSegments(
-        buildVisibleLineOfSightSegments(points, lineOfSightEndpoints),
-      );
-
       datasets.push(
-        ...lineOfSightSegments.map((segment) => ({
-          label: "Line of sight",
-          data: segment,
-          borderColor: theme.lineOfSight,
-          backgroundColor: "transparent",
-          borderDash: [7, 5],
-          borderWidth: 2,
-          fill: false,
-          order: belowProfileOverlayDatasetOrder,
-          pointRadius: 0,
-          pointHitRadius: 0,
-          pointHoverRadius: 0,
-          spanGaps: false,
-          tension: 0,
-        })),
+        ...lineOfSightOverlays.flatMap((overlay) => {
+          const isAdjusted = overlay.adjustment === "curvature-adjusted";
+
+          return overlay.segments.map((segment) => ({
+            label: isAdjusted
+              ? "Curvature-adjusted line of sight"
+              : "Line of sight",
+            data: segment,
+            borderColor: isAdjusted
+              ? colorWithAlpha(theme.lineOfSight, adjustedLineAlpha)
+              : theme.lineOfSight,
+            backgroundColor: "transparent",
+            borderDash: isAdjusted ? [2, 4] : [7, 5],
+            borderWidth: isAdjusted ? 1.35 : 2,
+            fill: false,
+            order: isAdjusted
+              ? adjustedBelowProfileOverlayDatasetOrder
+              : belowProfileOverlayDatasetOrder,
+            pointRadius: 0,
+            pointHitRadius: 0,
+            pointHoverRadius: 0,
+            spanGaps: false,
+            tension: 0,
+          }));
+        }),
         {
           label: lineOfSightEndpointDatasetLabel,
           data: [
@@ -313,13 +386,13 @@ export function ProfileChart({
 
     return { datasets };
   }, [
-    fresnelShell,
+    fresnelShellOverlays,
     lastDistance,
+    lineOfSightOverlays,
     lineOfSightEndpoints,
     mutedFresnelShells,
     points,
     theme,
-    visibleFresnelShellSegments,
   ]);
 
   const getEndpointAtEvent = useCallback(
@@ -363,36 +436,35 @@ export function ProfileChart({
   const getFresnelShellAtEvent = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       const chart = chartRef.current;
-      if (!chart || !fresnelShell) return null;
+      if (!chart || fresnelShellOverlays.length === 0) return null;
 
       const xScale = chart.scales.x;
       const yScale = chart.scales.y;
       if (!xScale || !yScale) return null;
 
       const pointer = getPointerPosition(event, chart);
-      const shellHit =
-        visibleFresnelShellSegments.upper.some((segment) =>
-          isPointerNearChartLine(
-            pointer,
-            segment,
-            xScale,
-            yScale,
-            fresnelShellHitRadius,
+      let nearestShell: number | null = null;
+      let nearestDistance = Infinity;
+
+      for (const overlay of fresnelShellOverlays) {
+        const distance = Math.min(
+          ...overlay.segments.upper.map((segment) =>
+            distanceToChartLine(pointer, segment, xScale, yScale),
           ),
-        ) ||
-        visibleFresnelShellSegments.lower.some((segment) =>
-          isPointerNearChartLine(
-            pointer,
-            segment,
-            xScale,
-            yScale,
-            fresnelShellHitRadius,
+          ...overlay.segments.lower.map((segment) =>
+            distanceToChartLine(pointer, segment, xScale, yScale),
           ),
         );
 
-      return shellHit ? fresnelShell.shellNumber : null;
+        if (distance <= fresnelShellHitRadius && distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestShell = overlay.shellNumber;
+        }
+      }
+
+      return nearestShell;
     },
-    [fresnelShell, visibleFresnelShellSegments],
+    [fresnelShellOverlays],
   );
 
   const updateEndpointFromPointer = useCallback(
@@ -538,8 +610,11 @@ export function ProfileChart({
             const label = context.dataset.label;
             const elevation = formatNumber(Number(context.parsed.y));
 
-            if (label === "Line of sight") {
-              return `Line of sight ${elevation}`;
+            if (
+              label === "Line of sight" ||
+              label === "Curvature-adjusted line of sight"
+            ) {
+              return `${label} ${elevation}`;
             }
 
             if (label === lineOfSightEndpointDatasetLabel) {
@@ -665,7 +740,7 @@ export function ProfileChart({
               onDraftCommit={onLineOfSightDraftCommit}
             />
           </div>
-          {fresnelShell ? (
+          {showFresnelFrequencyInput ? (
             <div
               className="pointer-events-auto absolute"
               style={{
@@ -975,14 +1050,15 @@ function chartPointYBounds(
   return min === Infinity || max === -Infinity ? undefined : { max, min };
 }
 
-function isPointerNearChartLine(
+function distanceToChartLine(
   pointer: { x: number; y: number },
   points: LineOfSightChartPoint[],
   xScale: Scale,
   yScale: Scale,
-  hitRadius: number,
-): boolean {
-  if (points.length < 2) return false;
+): number {
+  if (points.length < 2) return Infinity;
+
+  let nearestDistance = Infinity;
 
   for (let index = 1; index < points.length; index++) {
     const previous = points[index - 1];
@@ -992,12 +1068,13 @@ function isPointerNearChartLine(
     const start = chartPointToPixel(previous, xScale, yScale);
     const end = chartPointToPixel(current, xScale, yScale);
 
-    if (distanceToSegment(pointer, start, end) <= hitRadius) {
-      return true;
-    }
+    nearestDistance = Math.min(
+      nearestDistance,
+      distanceToSegment(pointer, start, end),
+    );
   }
 
-  return false;
+  return nearestDistance;
 }
 
 function chartPointToPixel(
@@ -1031,6 +1108,32 @@ function distanceToSegment(
   const projectedY = start.y + ratio * dy;
 
   return Math.hypot(point.x - projectedX, point.y - projectedY);
+}
+
+function colorWithAlpha(color: string, alpha: number): string {
+  const boundedAlpha = Math.max(0, Math.min(1, alpha));
+  const trimmedColor = color.trim();
+  const hexPattern =
+    /^#(?<red>[0-9a-f]{2})(?<green>[0-9a-f]{2})(?<blue>[0-9a-f]{2})$/i;
+  const hexMatch = hexPattern.exec(trimmedColor);
+
+  if (hexMatch?.groups) {
+    const red = Number.parseInt(hexMatch.groups.red!, 16);
+    const green = Number.parseInt(hexMatch.groups.green!, 16);
+    const blue = Number.parseInt(hexMatch.groups.blue!, 16);
+
+    return `rgba(${red}, ${green}, ${blue}, ${boundedAlpha})`;
+  }
+
+  const rgbPattern =
+    /^rgba?\(\s*(?<red>\d+)\s*,\s*(?<green>\d+)\s*,\s*(?<blue>\d+)(?:\s*,\s*[\d.]+)?\s*\)$/i;
+  const rgbMatch = rgbPattern.exec(trimmedColor);
+
+  if (rgbMatch?.groups) {
+    return `rgba(${rgbMatch.groups.red}, ${rgbMatch.groups.green}, ${rgbMatch.groups.blue}, ${boundedAlpha})`;
+  }
+
+  return color;
 }
 
 function parseFresnelFrequencyDraft(value: string): number | null {
