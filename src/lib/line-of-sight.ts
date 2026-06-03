@@ -28,8 +28,13 @@ export type FresnelZoneUnitScales = {
   verticalMetersPerUnit: number;
 };
 
+export type LineOfSightAdjustment = "flat" | "curvature-adjusted";
+
 export const DEFAULT_FRESNEL_FREQUENCY_MHZ = 5800;
 export const FRESNEL_SHELL_NUMBER = 1;
+export const FRESNEL_SHELL_NUMBERS = [1, 2, 3] as const;
+export const EARTH_RADIUS_METERS = 6_371_000;
+export const STANDARD_EFFECTIVE_EARTH_RADIUS_FACTOR = 4 / 3;
 
 export const DEFAULT_FRESNEL_ZONE_UNIT_SCALES: FresnelZoneUnitScales = {
   horizontalMetersPerUnit: 1,
@@ -37,6 +42,7 @@ export const DEFAULT_FRESNEL_ZONE_UNIT_SCALES: FresnelZoneUnitScales = {
 };
 
 const speedOfLightMetersPerSecond = 299_792_458;
+const curvatureAdjustedSampleCount = 96;
 
 /**
  * Derives line-of-sight endpoint elevations from the first and last finite elevations in a profile.
@@ -81,6 +87,49 @@ export function lineOfSightElevationAt(
     endpoints.startElevation +
     (endpoints.endElevation - endpoints.startElevation) * ratio
   );
+}
+
+export function earthCurvatureDropAt(
+  distance: number,
+  totalDistance: number,
+  unitScales = DEFAULT_FRESNEL_ZONE_UNIT_SCALES,
+  effectiveEarthRadiusFactor = STANDARD_EFFECTIVE_EARTH_RADIUS_FACTOR,
+): number | null {
+  if (
+    !isPositiveFinite(totalDistance) ||
+    !isPositiveFinite(effectiveEarthRadiusFactor) ||
+    !Number.isFinite(distance) ||
+    distance < 0 ||
+    distance > totalDistance ||
+    !isValidFresnelUnitScales(unitScales)
+  ) {
+    return null;
+  }
+
+  if (distance === 0 || distance === totalDistance) return 0;
+
+  const d1Meters = distance * unitScales.horizontalMetersPerUnit;
+  const d2Meters =
+    (totalDistance - distance) * unitScales.horizontalMetersPerUnit;
+  const dropMeters =
+    (d1Meters * d2Meters) /
+    (2 * EARTH_RADIUS_METERS * effectiveEarthRadiusFactor);
+  const drop = dropMeters / unitScales.verticalMetersPerUnit;
+
+  return Number.isFinite(drop) ? drop : null;
+}
+
+export function curvatureAdjustedLineOfSightElevationAt(
+  distance: number,
+  lastDistance: number,
+  endpoints: LineOfSightEndpoints,
+  unitScales = DEFAULT_FRESNEL_ZONE_UNIT_SCALES,
+): number | null {
+  const drop = earthCurvatureDropAt(distance, lastDistance, unitScales);
+
+  return drop === null
+    ? null
+    : lineOfSightElevationAt(distance, lastDistance, endpoints) - drop;
 }
 
 /**
@@ -140,6 +189,7 @@ export function buildFresnelZoneShell(
   frequencyMhz: number,
   shellNumber = FRESNEL_SHELL_NUMBER,
   unitScales = DEFAULT_FRESNEL_ZONE_UNIT_SCALES,
+  adjustment: LineOfSightAdjustment = "flat",
 ): FresnelZoneShell | null {
   if (!endpoints || points.length === 0) return null;
 
@@ -167,11 +217,14 @@ export function buildFresnelZoneShell(
 
     if (radius === null) return null;
 
-    const centerElevation = lineOfSightElevationAt(
+    const centerElevation = lineOfSightElevationForAdjustment(
       point.distance,
       totalDistance,
       endpoints,
+      adjustment,
+      unitScales,
     );
+    if (centerElevation === null) return null;
 
     upper.push({ x: point.distance, y: centerElevation + radius });
     lower.push({ x: point.distance, y: centerElevation - radius });
@@ -195,6 +248,7 @@ export function buildVisibleFresnelZoneShellSegments(
   frequencyMhz: number,
   shellNumber = FRESNEL_SHELL_NUMBER,
   unitScales = DEFAULT_FRESNEL_ZONE_UNIT_SCALES,
+  adjustment: LineOfSightAdjustment = "flat",
 ): FresnelZoneShellSegments {
   const emptySegments: FresnelZoneShellSegments = { lower: [], upper: [] };
   if (!endpoints || points.length === 0) return emptySegments;
@@ -217,6 +271,7 @@ export function buildVisibleFresnelZoneShellSegments(
       frequencyMhz,
       shellNumber,
       unitScales,
+      adjustment,
       "lower",
     ),
     upper: buildVisibleFresnelBoundarySegments(
@@ -226,6 +281,7 @@ export function buildVisibleFresnelZoneShellSegments(
       frequencyMhz,
       shellNumber,
       unitScales,
+      adjustment,
       "upper",
     ),
   };
@@ -243,18 +299,45 @@ export function buildVisibleFresnelZoneShellSegments(
 export function buildVisibleLineOfSightSegments(
   points: ProfilePoint[],
   endpoints: LineOfSightEndpoints | null,
+  adjustment: LineOfSightAdjustment = "flat",
+  unitScales = DEFAULT_FRESNEL_ZONE_UNIT_SCALES,
 ): (LineOfSightChartPoint | null)[] {
   if (!endpoints || points.length === 0) return [];
 
   const lastDistance = points.at(-1)?.distance ?? 0;
+  const profilePoints =
+    adjustment === "curvature-adjusted"
+      ? densifyProfilePointsForCurvature(points, lastDistance)
+      : points;
   const output: (LineOfSightChartPoint | null)[] = [];
-  const first = classifyPoint(points[0]!, lastDistance, endpoints);
+  const first = classifyPoint(
+    profilePoints[0]!,
+    lastDistance,
+    endpoints,
+    adjustment,
+    unitScales,
+  );
+  if (!first) return [];
 
   appendLineOfSightPoint(output, first.visible ? first.linePoint : null);
 
-  for (let index = 1; index < points.length; index++) {
-    const previous = classifyPoint(points[index - 1]!, lastDistance, endpoints);
-    const current = classifyPoint(points[index]!, lastDistance, endpoints);
+  for (let index = 1; index < profilePoints.length; index++) {
+    const previous = classifyPoint(
+      profilePoints[index - 1]!,
+      lastDistance,
+      endpoints,
+      adjustment,
+      unitScales,
+    );
+    const current = classifyPoint(
+      profilePoints[index]!,
+      lastDistance,
+      endpoints,
+      adjustment,
+      unitScales,
+    );
+
+    if (!previous || !current) return [];
 
     if (previous.kind === "gap" || current.kind === "gap") {
       appendLineOfSightPoint(output, null);
@@ -266,10 +349,7 @@ export function buildVisibleLineOfSightSegments(
     }
 
     if (previous.visible !== current.visible) {
-      appendLineOfSightPoint(
-        output,
-        crossingPoint(previous, current, lastDistance, endpoints),
-      );
+      appendLineOfSightPoint(output, crossingPoint(previous, current));
     }
 
     appendLineOfSightPoint(output, current.visible ? current.linePoint : null);
@@ -305,20 +385,26 @@ function classifyPoint(
   point: ProfilePoint,
   lastDistance: number,
   endpoints: LineOfSightEndpoints,
-): ClassifiedPoint {
-  const lineElevation = lineOfSightElevationAt(
+  adjustment: LineOfSightAdjustment,
+  unitScales: FresnelZoneUnitScales,
+): ClassifiedPoint | null {
+  const linePoint = lineOfSightChartPointAt(
     point.distance,
     lastDistance,
     endpoints,
+    adjustment,
+    unitScales,
   );
+  if (!linePoint) return null;
+
   const hasTerrain = Number.isFinite(point.elevation);
-  const delta = hasTerrain ? lineElevation - point.elevation! : null;
+  const delta = hasTerrain ? linePoint.y - point.elevation! : null;
 
   return {
     distance: point.distance,
     delta,
     kind: hasTerrain ? "finite" : "gap",
-    linePoint: { x: point.distance, y: lineElevation },
+    linePoint,
     visible: delta === null ? false : delta > 0,
   };
 }
@@ -328,15 +414,11 @@ function classifyPoint(
  *
  * @param start - The classified point at the start of the segment
  * @param end - The classified point at the end of the segment
- * @param lastDistance - The last distance in the profile (used to compute line elevation)
- * @param endpoints - The start and end elevations that define the line of sight
  * @returns A chart point (`{ x, y }`) on the line of sight at the estimated crossing distance where visibility flips between `start` and `end`
  */
 function crossingPoint(
   start: ClassifiedPoint,
   end: ClassifiedPoint,
-  lastDistance: number,
-  endpoints: LineOfSightEndpoints,
 ): LineOfSightChartPoint {
   const startDelta = start.delta ?? 0;
   const endDelta = end.delta ?? 0;
@@ -344,11 +426,10 @@ function crossingPoint(
   const rawRatio = denominator === 0 ? 0 : startDelta / denominator;
   const ratio = Math.max(0, Math.min(1, rawRatio));
   const distance = start.distance + (end.distance - start.distance) * ratio;
+  const elevation =
+    start.linePoint.y + (end.linePoint.y - start.linePoint.y) * ratio;
 
-  return {
-    x: distance,
-    y: lineOfSightElevationAt(distance, lastDistance, endpoints),
-  };
+  return { x: distance, y: elevation };
 }
 
 /**
@@ -425,15 +506,21 @@ function buildVisibleFresnelBoundarySegments(
   frequencyMhz: number,
   shellNumber: number,
   unitScales: FresnelZoneUnitScales,
+  adjustment: LineOfSightAdjustment,
   boundary: FresnelBoundary,
 ): LineOfSightChartPoint[][] {
+  const profilePoints =
+    adjustment === "curvature-adjusted"
+      ? densifyProfilePointsForCurvature(points, totalDistance)
+      : points;
   const first = classifyFresnelBoundaryPoint(
-    points[0]!,
+    profilePoints[0]!,
     endpoints,
     totalDistance,
     frequencyMhz,
     shellNumber,
     unitScales,
+    adjustment,
     boundary,
   );
 
@@ -442,23 +529,25 @@ function buildVisibleFresnelBoundarySegments(
   const output: (LineOfSightChartPoint | null)[] = [];
   appendLineOfSightPoint(output, first.visible ? first.linePoint : null);
 
-  for (let index = 1; index < points.length; index++) {
+  for (let index = 1; index < profilePoints.length; index++) {
     const previous = classifyFresnelBoundaryPoint(
-      points[index - 1]!,
+      profilePoints[index - 1]!,
       endpoints,
       totalDistance,
       frequencyMhz,
       shellNumber,
       unitScales,
+      adjustment,
       boundary,
     );
     const current = classifyFresnelBoundaryPoint(
-      points[index]!,
+      profilePoints[index]!,
       endpoints,
       totalDistance,
       frequencyMhz,
       shellNumber,
       unitScales,
+      adjustment,
       boundary,
     );
 
@@ -493,6 +582,7 @@ function classifyFresnelBoundaryPoint(
   frequencyMhz: number,
   shellNumber: number,
   unitScales: FresnelZoneUnitScales,
+  adjustment: LineOfSightAdjustment,
   boundary: FresnelBoundary,
 ): ClassifiedPoint | null {
   const radius = fresnelRadiusForChartDistance(
@@ -505,11 +595,15 @@ function classifyFresnelBoundaryPoint(
 
   if (radius === null) return null;
 
-  const centerElevation = lineOfSightElevationAt(
+  const centerElevation = lineOfSightElevationForAdjustment(
     point.distance,
     totalDistance,
     endpoints,
+    adjustment,
+    unitScales,
   );
+  if (centerElevation === null) return null;
+
   const boundaryElevation =
     boundary === "upper" ? centerElevation + radius : centerElevation - radius;
   const hasTerrain = Number.isFinite(point.elevation);
@@ -538,6 +632,100 @@ function fresnelBoundaryCrossingPoint(
     start.linePoint.y + (end.linePoint.y - start.linePoint.y) * ratio;
 
   return { x: distance, y: elevation };
+}
+
+function densifyProfilePointsForCurvature(
+  points: ProfilePoint[],
+  totalDistance: number,
+): ProfilePoint[] {
+  if (!isPositiveFinite(totalDistance) || points.length < 2) return points;
+
+  const output: ProfilePoint[] = [];
+
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index];
+    if (!point) continue;
+
+    output.push(point);
+
+    const nextPoint = points[index + 1];
+    if (!nextPoint) continue;
+
+    appendInteriorProfilePoints(output, point, nextPoint, totalDistance);
+  }
+
+  return output;
+}
+
+function appendInteriorProfilePoints(
+  output: ProfilePoint[],
+  start: ProfilePoint,
+  end: ProfilePoint,
+  totalDistance: number,
+): void {
+  if (
+    !Number.isFinite(start.distance) ||
+    !Number.isFinite(end.distance) ||
+    !Number.isFinite(start.elevation) ||
+    !Number.isFinite(end.elevation) ||
+    start.distance === end.distance
+  ) {
+    return;
+  }
+
+  const distanceDelta = end.distance - start.distance;
+  const sampleStep = totalDistance / curvatureAdjustedSampleCount;
+  const sampleCount = Math.max(
+    1,
+    Math.ceil(Math.abs(distanceDelta) / sampleStep),
+  );
+
+  for (let sampleIndex = 1; sampleIndex < sampleCount; sampleIndex++) {
+    const ratio = sampleIndex / sampleCount;
+
+    output.push({
+      distance: start.distance + distanceDelta * ratio,
+      elevation: start.elevation! + (end.elevation! - start.elevation!) * ratio,
+      x: start.x + (end.x - start.x) * ratio,
+      y: start.y + (end.y - start.y) * ratio,
+    });
+  }
+}
+
+function lineOfSightChartPointAt(
+  distance: number,
+  lastDistance: number,
+  endpoints: LineOfSightEndpoints,
+  adjustment: LineOfSightAdjustment,
+  unitScales: FresnelZoneUnitScales,
+): LineOfSightChartPoint | null {
+  const elevation = lineOfSightElevationForAdjustment(
+    distance,
+    lastDistance,
+    endpoints,
+    adjustment,
+    unitScales,
+  );
+
+  return elevation === null ? null : { x: distance, y: elevation };
+}
+
+function lineOfSightElevationForAdjustment(
+  distance: number,
+  lastDistance: number,
+  endpoints: LineOfSightEndpoints,
+  adjustment: LineOfSightAdjustment,
+  unitScales: FresnelZoneUnitScales,
+): number | null {
+  const lineElevation = lineOfSightElevationAt(
+    distance,
+    lastDistance,
+    endpoints,
+  );
+  if (adjustment === "flat") return lineElevation;
+
+  const drop = earthCurvatureDropAt(distance, lastDistance, unitScales);
+  return drop === null ? null : lineElevation - drop;
 }
 
 function findLastFiniteElevation(points: ProfilePoint[]): number | undefined {

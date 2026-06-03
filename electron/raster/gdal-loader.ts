@@ -238,17 +238,17 @@ function warningsForProject(
 
   if (horizontalUnit.metersPerUnit === null) {
     warnings.push(
-      "Fresnel zones are hidden because the DSM horizontal unit cannot be converted to metres.",
+      "Fresnel zones and curvature-adjusted overlays are hidden because the DSM horizontal unit cannot be converted to metres.",
     );
   }
 
   if (isUnknownElevationUnit(elevationUnit)) {
     warnings.push(
-      "The DSM elevation unit is unknown. Fresnel zones assume elevation values are metres.",
+      "The DSM elevation unit is unknown. Fresnel zones and curvature-adjusted overlays assume elevation values are metres.",
     );
   } else if (metersPerElevationUnit(elevationUnit) === null) {
     warnings.push(
-      "Fresnel zones are hidden because the DSM elevation unit cannot be converted to metres.",
+      "Fresnel zones and curvature-adjusted overlays are hidden because the DSM elevation unit cannot be converted to metres.",
     );
   }
 
