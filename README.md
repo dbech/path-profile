@@ -134,12 +134,12 @@ bun run format:check
 
 The profile chart overlays a line of sight from `A` to `B` on the terrain.
 
-- Each end starts at the terrain elevation. Drag the `A` and `B` handles, or type into the `A` and `B` boxes above the chart, to set antenna elevations.
+- Each end starts at the terrain elevation there, or at the nearest sampled elevation along the path if the DEM has no data at that end. Drag the `A` and `B` handles, or type into the `A` and `B` boxes above the chart, to set antenna elevations.
 - The `F` box sets the radio frequency in MHz. It defaults to 5800.
-- Fresnel zones 1, 2 and 3 are drawn around the line of sight. Click a zone to mute it.
+- Fresnel zones 1, 2 and 3 are drawn around the line of sight. Click a zone to mute it, and click again to restore it.
 - The solid Fresnel lines and the long-dashed line of sight treat the earth as flat.
 - The fainter dashed lines are the same overlays adjusted for earth curvature. They use an effective earth radius of 4/3 of 6,371 km, the standard atmosphere figure for radio paths. The adjustment lowers the line of sight by `d1 * d2 / (2 * k * R)` and leaves the terrain as sampled.
-- Overlays are hidden wherever the terrain blocks them, so a gap in a line marks an obstruction.
+- Overlays are hidden wherever the terrain blocks them or the DEM has no data, so a gap in a line marks an obstruction or missing terrain.
 - Fresnel zones and the curvature-adjusted overlays need a projected CRS with a linear unit, so the app can convert distances to metres. A DEM in a geographic CRS (degrees) shows the flat line of sight only.
 - If the DEM does not label its elevation unit, the app assumes metres and shows a warning.
 
@@ -159,4 +159,4 @@ The profile chart overlays a line of sight from `A` to `B` on the terrain.
 
 Path Profile's own source code is MIT licensed. See [LICENSE](LICENSE).
 
-Release builds also bundle third-party software under its own licences, including Electron and Chromium, Node.js, and `gdal-async` (Apache-2.0) with the GDAL, PROJ and GEOS libraries built into it. GEOS is LGPL-2.1. The MIT licence does not cover those components.
+Release builds also bundle third-party software under its own licences, including Electron and Chromium, Node.js, and `gdal-async` (Apache-2.0) with the GDAL, PROJ and GEOS libraries built into it. GEOS is LGPL-2.1. The MIT licence does not cover those components. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists them, and the installer ships it with their licence texts.

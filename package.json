@@ -76,12 +76,23 @@
       "out/**/*",
       "package.json"
     ],
+    "extraFiles": [
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.path-profile.txt"
+      },
+      {
+        "from": "THIRD-PARTY-NOTICES.md",
+        "to": "THIRD-PARTY-NOTICES.md"
+      }
+    ],
     "extraResources": [
       {
         "from": ".release-assets/node",
         "to": "node",
         "filter": [
-          "node.exe"
+          "node.exe",
+          "LICENSE"
         ]
       },
       {

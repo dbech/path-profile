@@ -42,7 +42,7 @@ export const DEFAULT_FRESNEL_ZONE_UNIT_SCALES: FresnelZoneUnitScales = {
 };
 
 const speedOfLightMetersPerSecond = 299_792_458;
-const curvatureAdjustedSampleCount = 96;
+const curveSampleCount = 96;
 
 /**
  * Derives line-of-sight endpoint elevations from the first and last finite elevations in a profile.
@@ -307,7 +307,7 @@ export function buildVisibleLineOfSightSegments(
   const lastDistance = points.at(-1)?.distance ?? 0;
   const profilePoints =
     adjustment === "curvature-adjusted"
-      ? densifyProfilePointsForCurvature(points, lastDistance)
+      ? densifyProfilePointsForCurves(points, lastDistance)
       : points;
   const output: (LineOfSightChartPoint | null)[] = [];
   const first = classifyPoint(
@@ -509,10 +509,9 @@ function buildVisibleFresnelBoundarySegments(
   adjustment: LineOfSightAdjustment,
   boundary: FresnelBoundary,
 ): LineOfSightChartPoint[][] {
-  const profilePoints =
-    adjustment === "curvature-adjusted"
-      ? densifyProfilePointsForCurvature(points, totalDistance)
-      : points;
+  // Fresnel boundaries are curves with or without the curvature adjustment,
+  // so sparse profiles always need interior samples.
+  const profilePoints = densifyProfilePointsForCurves(points, totalDistance);
   const first = classifyFresnelBoundaryPoint(
     profilePoints[0]!,
     endpoints,
@@ -634,7 +633,7 @@ function fresnelBoundaryCrossingPoint(
   return { x: distance, y: elevation };
 }
 
-function densifyProfilePointsForCurvature(
+function densifyProfilePointsForCurves(
   points: ProfilePoint[],
   totalDistance: number,
 ): ProfilePoint[] {
@@ -674,7 +673,7 @@ function appendInteriorProfilePoints(
   }
 
   const distanceDelta = end.distance - start.distance;
-  const sampleStep = totalDistance / curvatureAdjustedSampleCount;
+  const sampleStep = totalDistance / curveSampleCount;
   const sampleCount = Math.max(
     1,
     Math.ceil(Math.abs(distanceDelta) / sampleStep),

@@ -12,6 +12,7 @@ const nodeName = process.platform === "win32" ? "node.exe" : "node";
 const nodeRuntimePath = path.join(nodeOutput, nodeName);
 const sourceNodeModules = path.join(repoRoot, "node_modules");
 const copiedPackageDestinations = new Map();
+const licenseFilePattern = /^(licen[sc]e|copying|copyright|notice)/i;
 
 fs.rmSync(outputDir, { force: true, recursive: true });
 fs.mkdirSync(nodeOutput, { recursive: true });
@@ -19,6 +20,8 @@ fs.copyFileSync(process.execPath, nodeRuntimePath);
 
 copyRuntimePackage("gdal-async", gdalSource, shouldCopyGdalRuntimeFile);
 copyPackageDependencyClosure("gdal-async", gdalSource);
+copyGdalLicenseFiles();
+copyNodeLicenseFile();
 validatePreparedRuntime();
 
 /**
@@ -250,6 +253,80 @@ function findPackageJson(packageName, startRoots) {
   }
 
   return undefined;
+}
+
+/**
+ * gdal.node has the libraries under gdal-async's deps/ built into it, so the
+ * licence texts for gdal-async and those libraries ship beside the binary.
+ */
+function copyGdalLicenseFiles() {
+  const gdalLicense = path.join(gdalSource, "LICENSE");
+  if (!fs.existsSync(gdalLicense)) {
+    throw new Error(`gdal-async licence file not found at ${gdalLicense}.`);
+  }
+  fs.copyFileSync(gdalLicense, path.join(gdalOutput, "LICENSE"));
+
+  const depsRoot = path.join(gdalSource, "deps");
+  const licensesOutput = path.join(gdalOutput, "licenses");
+  /** @type {string[]} */
+  const copiedLibraries = [];
+
+  for (const library of readDirectories(depsRoot)) {
+    const libraryRoot = path.join(depsRoot, library);
+
+    for (const sourceDirectory of readDirectories(libraryRoot)) {
+      const sourceRoot = path.join(libraryRoot, sourceDirectory);
+
+      for (const entry of fs.readdirSync(sourceRoot, { withFileTypes: true })) {
+        if (!entry.isFile() || !licenseFilePattern.test(entry.name)) continue;
+
+        const destination = path.join(licensesOutput, library, entry.name);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.copyFileSync(path.join(sourceRoot, entry.name), destination);
+        if (!copiedLibraries.includes(library)) copiedLibraries.push(library);
+      }
+    }
+  }
+
+  if (!copiedLibraries.includes("libgeos")) {
+    throw new Error(
+      `GEOS licence file not found under ${path.join(depsRoot, "libgeos")}. gdal.node includes GEOS (LGPL-2.1), so its licence must ship with the release.`,
+    );
+  }
+}
+
+/**
+ * Copies the Node.js licence beside the bundled runtime when the Node.js
+ * install that runs this script has one. Not every install layout does.
+ */
+function copyNodeLicenseFile() {
+  const nodeDirectory = path.dirname(process.execPath);
+  const candidates = [
+    path.join(nodeDirectory, "LICENSE"),
+    path.join(nodeDirectory, "..", "LICENSE"),
+  ];
+
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    if (!fs.readFileSync(candidate, "utf8").includes("Node.js")) continue;
+
+    fs.copyFileSync(candidate, path.join(nodeOutput, "LICENSE"));
+    return;
+  }
+}
+
+/**
+ * @param {string} directory
+ * @returns {string[]} names of the directories directly inside `directory`
+ */
+function readDirectories(directory) {
+  if (!fs.existsSync(directory)) return [];
+
+  return fs
+    .readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
 }
 
 function validatePreparedRuntime() {
