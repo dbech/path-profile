@@ -159,4 +159,4 @@ The profile chart overlays a line of sight from `A` to `B` on the terrain.
 
 Path Profile's own source code is MIT licensed. See [LICENSE](LICENSE).
 
-Release builds also bundle third-party software under its own licences, including Electron and Chromium, Node.js, and `gdal-async` (Apache-2.0) with the GDAL, PROJ and GEOS libraries built into it. GEOS is LGPL-2.1. The MIT licence does not cover those components. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists them, and the installer ships it with their licence texts.
+Release builds also bundle third-party software under its own licences, including Electron and Chromium, Node.js, and `gdal-async` (Apache-2.0) with the GDAL, PROJ and GEOS libraries built into it. GEOS is LGPL-2.1. The MIT licence does not cover those components. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists the main ones, and the installer ships that file with the licence texts it points to.

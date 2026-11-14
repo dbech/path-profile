@@ -12,7 +12,10 @@ const nodeName = process.platform === "win32" ? "node.exe" : "node";
 const nodeRuntimePath = path.join(nodeOutput, nodeName);
 const sourceNodeModules = path.join(repoRoot, "node_modules");
 const copiedPackageDestinations = new Map();
+const vendoredLicensesSource = path.join(repoRoot, "third-party-licenses");
 const licenseFilePattern = /^(licen[sc]e|copying|copyright|notice)/i;
+const sourceFileExtensionPattern =
+  /\.(c|cc|cpp|h|hpp|py|cmake|in|m4|java|js)$/i;
 
 fs.rmSync(outputDir, { force: true, recursive: true });
 fs.mkdirSync(nodeOutput, { recursive: true });
@@ -266,40 +269,38 @@ function copyGdalLicenseFiles() {
   }
   fs.copyFileSync(gdalLicense, path.join(gdalOutput, "LICENSE"));
 
-  const depsRoot = path.join(gdalSource, "deps");
   const licensesOutput = path.join(gdalOutput, "licenses");
-  /** @type {string[]} */
-  const copiedLibraries = [];
+  const depsRoot = path.join(gdalSource, "deps");
 
-  for (const library of readDirectories(depsRoot)) {
-    const libraryRoot = path.join(depsRoot, library);
+  // Licence files anywhere in the vendored library sources, keeping their
+  // relative paths so nested third-party notices stay identifiable.
+  copyLicenseFiles(depsRoot, licensesOutput);
+  // Licence texts the gdal-async package does not carry.
+  copyLicenseFiles(vendoredLicensesSource, licensesOutput);
 
-    for (const sourceDirectory of readDirectories(libraryRoot)) {
-      const sourceRoot = path.join(libraryRoot, sourceDirectory);
+  const requiredLicenses = [
+    path.join("libgeos", "geos", "COPYING"),
+    path.join("gdal", "LICENSE.TXT"),
+    path.join("libaec", "LICENSE.txt"),
+  ];
 
-      for (const entry of fs.readdirSync(sourceRoot, { withFileTypes: true })) {
-        if (!entry.isFile() || !licenseFilePattern.test(entry.name)) continue;
-
-        const destination = path.join(licensesOutput, library, entry.name);
-        fs.mkdirSync(path.dirname(destination), { recursive: true });
-        fs.copyFileSync(path.join(sourceRoot, entry.name), destination);
-        if (!copiedLibraries.includes(library)) copiedLibraries.push(library);
-      }
+  for (const requiredLicense of requiredLicenses) {
+    if (!fs.existsSync(path.join(licensesOutput, requiredLicense))) {
+      throw new Error(
+        `Licence file ${requiredLicense} is missing from ${licensesOutput}. gdal.node includes this library, so its licence must ship with the release.`,
+      );
     }
-  }
-
-  if (!copiedLibraries.includes("libgeos")) {
-    throw new Error(
-      `GEOS licence file not found under ${path.join(depsRoot, "libgeos")}. gdal.node includes GEOS (LGPL-2.1), so its licence must ship with the release.`,
-    );
   }
 }
 
 /**
- * Copies the Node.js licence beside the bundled runtime when the Node.js
- * install that runs this script has one. Not every install layout does.
+ * Ships the Node.js licence beside the bundled runtime. Uses the copy in the
+ * Node.js install that runs this script when there is one, and otherwise
+ * downloads the licence for that exact version. The Windows installer for
+ * Node.js does not put a licence file on disk.
  */
 function copyNodeLicenseFile() {
+  const destination = path.join(nodeOutput, "LICENSE");
   const nodeDirectory = path.dirname(process.execPath);
   const candidates = [
     path.join(nodeDirectory, "LICENSE"),
@@ -308,25 +309,79 @@ function copyNodeLicenseFile() {
 
   for (const candidate of candidates) {
     if (!fs.existsSync(candidate)) continue;
-    if (!fs.readFileSync(candidate, "utf8").includes("Node.js")) continue;
+    if (!isNodeLicense(fs.readFileSync(candidate, "utf8"))) continue;
 
-    fs.copyFileSync(candidate, path.join(nodeOutput, "LICENSE"));
+    fs.copyFileSync(candidate, destination);
     return;
   }
+
+  const url = `https://raw.githubusercontent.com/nodejs/node/v${process.versions.node}/LICENSE`;
+  // One line, single quotes only, so it survives argument quoting on Windows.
+  const downloadScript =
+    "fetch(process.argv[1]).then(async (r) => { if (!r.ok) throw new Error('HTTP ' + r.status); require('node:fs').writeFileSync(process.argv[2], await r.text()); }).catch((e) => { console.error(e.message); process.exit(1); });";
+  const result = spawnSync(
+    process.execPath,
+    ["-e", downloadScript, url, destination],
+    { encoding: "utf8", timeout: 60_000 },
+  );
+  const downloaded =
+    !result.error &&
+    result.status === 0 &&
+    fs.existsSync(destination) &&
+    isNodeLicense(fs.readFileSync(destination, "utf8"));
+
+  if (downloaded) return;
+
+  fs.rmSync(destination, { force: true });
+  const message = `Could not find or download the Node.js licence from ${url}: ${
+    result.error?.message ?? (result.stderr.trim() || "unexpected content")
+  }`;
+
+  // A release must not ship node.exe without its licence. Local smoke builds
+  // may be offline, so they only warn.
+  if (process.env.CI) throw new Error(message);
+  console.warn(`Warning: ${message}`);
 }
 
 /**
- * @param {string} directory
- * @returns {string[]} names of the directories directly inside `directory`
+ * @param {string} text
  */
-function readDirectories(directory) {
-  if (!fs.existsSync(directory)) return [];
+function isNodeLicense(text) {
+  return text.includes("Node.js is licensed for use as follows");
+}
 
-  return fs
-    .readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
+/**
+ * Copies every licence file under `sourceRoot` to the same relative path under
+ * `destinationRoot`.
+ *
+ * @param {string} sourceRoot
+ * @param {string} destinationRoot
+ * @param {string} [directory]
+ */
+function copyLicenseFiles(sourceRoot, destinationRoot, directory = sourceRoot) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const sourcePath = path.join(directory, entry.name);
+
+    if (entry.isDirectory()) {
+      copyLicenseFiles(sourceRoot, destinationRoot, sourcePath);
+      continue;
+    }
+
+    if (
+      !entry.isFile() ||
+      !licenseFilePattern.test(entry.name) ||
+      sourceFileExtensionPattern.test(entry.name)
+    ) {
+      continue;
+    }
+
+    const destinationPath = path.join(
+      destinationRoot,
+      path.relative(sourceRoot, sourcePath),
+    );
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+  }
 }
 
 function validatePreparedRuntime() {

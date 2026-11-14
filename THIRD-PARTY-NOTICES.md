@@ -17,8 +17,7 @@ as `LICENSE.electron.txt` and `LICENSES.chromium.html`.
 
 `resources/node/node.exe` is an unmodified Node.js runtime, used to run the
 raster worker. Node.js is MIT licensed and bundles dependencies under their own
-licences. The full text is at <https://github.com/nodejs/node/blob/main/LICENSE>.
-When the build machine's Node.js install includes that file, a copy ships as
+licences. The licence text for the bundled version ships as
 `resources/node/LICENSE`.
 
 ## gdal-async
@@ -45,14 +44,15 @@ Its native module, `gdal.node`, is built with these libraries inside it:
 | libaec   | BSD-2-Clause       |
 | SQLite   | Public domain      |
 
-The licence files that the gdal-async package carries for these libraries ship
-under `resources/node_modules/gdal-async/licenses/`. GDAL's licence, which also
-covers the libraries GDAL vendors, is at <https://gdal.org/en/stable/license.html>.
+Their licence files ship under `resources/node_modules/gdal-async/licenses/`,
+one folder per library. That includes the licence files of code those libraries
+vendor in turn. `gdal/LICENSE.TXT` is GDAL's own licence file, which also lists
+the licences of the libraries GDAL vendors.
 
 ### GEOS and the LGPL
 
 GEOS is licensed under the GNU Lesser General Public License, version 2.1. Its
-text ships as `resources/node_modules/gdal-async/licenses/libgeos/COPYING`.
+text ships as `resources/node_modules/gdal-async/licenses/libgeos/geos/COPYING`.
 
 The GEOS source, exactly as built into `gdal.node`, is in the gdal-async npm
 package of the same version under `deps/libgeos`, with the build scripts. Path
