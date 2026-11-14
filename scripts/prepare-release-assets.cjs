@@ -12,6 +12,10 @@ const nodeName = process.platform === "win32" ? "node.exe" : "node";
 const nodeRuntimePath = path.join(nodeOutput, nodeName);
 const sourceNodeModules = path.join(repoRoot, "node_modules");
 const copiedPackageDestinations = new Map();
+const vendoredLicensesSource = path.join(repoRoot, "third-party-licenses");
+const licenseFilePattern = /^(licen[sc]e|copying|copyright|notice)/i;
+const sourceFileExtensionPattern =
+  /\.(c|cc|cpp|h|hpp|py|cmake|in|m4|java|js)$/i;
 
 fs.rmSync(outputDir, { force: true, recursive: true });
 fs.mkdirSync(nodeOutput, { recursive: true });
@@ -19,6 +23,8 @@ fs.copyFileSync(process.execPath, nodeRuntimePath);
 
 copyRuntimePackage("gdal-async", gdalSource, shouldCopyGdalRuntimeFile);
 copyPackageDependencyClosure("gdal-async", gdalSource);
+copyGdalLicenseFiles();
+copyNodeLicenseFile();
 validatePreparedRuntime();
 
 /**
@@ -250,6 +256,132 @@ function findPackageJson(packageName, startRoots) {
   }
 
   return undefined;
+}
+
+/**
+ * gdal.node has the libraries under gdal-async's deps/ built into it, so the
+ * licence texts for gdal-async and those libraries ship beside the binary.
+ */
+function copyGdalLicenseFiles() {
+  const gdalLicense = path.join(gdalSource, "LICENSE");
+  if (!fs.existsSync(gdalLicense)) {
+    throw new Error(`gdal-async licence file not found at ${gdalLicense}.`);
+  }
+  fs.copyFileSync(gdalLicense, path.join(gdalOutput, "LICENSE"));
+
+  const licensesOutput = path.join(gdalOutput, "licenses");
+  const depsRoot = path.join(gdalSource, "deps");
+
+  // Licence files anywhere in the vendored library sources, keeping their
+  // relative paths so nested third-party notices stay identifiable.
+  copyLicenseFiles(depsRoot, licensesOutput);
+  // Licence texts the gdal-async package does not carry.
+  copyLicenseFiles(vendoredLicensesSource, licensesOutput);
+
+  const requiredLicenses = [
+    path.join("libgeos", "geos", "COPYING"),
+    path.join("gdal", "LICENSE.TXT"),
+    path.join("libaec", "LICENSE.txt"),
+  ];
+
+  for (const requiredLicense of requiredLicenses) {
+    if (!fs.existsSync(path.join(licensesOutput, requiredLicense))) {
+      throw new Error(
+        `Licence file ${requiredLicense} is missing from ${licensesOutput}. gdal.node includes this library, so its licence must ship with the release.`,
+      );
+    }
+  }
+}
+
+/**
+ * Ships the Node.js licence beside the bundled runtime. Uses the copy in the
+ * Node.js install that runs this script when there is one, and otherwise
+ * downloads the licence for that exact version. The Windows installer for
+ * Node.js does not put a licence file on disk.
+ */
+function copyNodeLicenseFile() {
+  const destination = path.join(nodeOutput, "LICENSE");
+  const nodeDirectory = path.dirname(process.execPath);
+  const candidates = [
+    path.join(nodeDirectory, "LICENSE"),
+    path.join(nodeDirectory, "..", "LICENSE"),
+  ];
+
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    if (!isNodeLicense(fs.readFileSync(candidate, "utf8"))) continue;
+
+    fs.copyFileSync(candidate, destination);
+    return;
+  }
+
+  const url = `https://raw.githubusercontent.com/nodejs/node/v${process.versions.node}/LICENSE`;
+  // One line, single quotes only, so it survives argument quoting on Windows.
+  const downloadScript =
+    "fetch(process.argv[1]).then(async (r) => { if (!r.ok) throw new Error('HTTP ' + r.status); require('node:fs').writeFileSync(process.argv[2], await r.text()); }).catch((e) => { console.error(e.message); process.exit(1); });";
+  const result = spawnSync(
+    process.execPath,
+    ["-e", downloadScript, url, destination],
+    { encoding: "utf8", timeout: 60_000 },
+  );
+  const downloaded =
+    !result.error &&
+    result.status === 0 &&
+    fs.existsSync(destination) &&
+    isNodeLicense(fs.readFileSync(destination, "utf8"));
+
+  if (downloaded) return;
+
+  fs.rmSync(destination, { force: true });
+  const message = `Could not find or download the Node.js licence from ${url}: ${
+    result.error?.message ?? (result.stderr.trim() || "unexpected content")
+  }`;
+
+  // A release must not ship node.exe without its licence. Local smoke builds
+  // may be offline, so they only warn.
+  if (process.env.CI) throw new Error(message);
+  console.warn(`Warning: ${message}`);
+}
+
+/**
+ * @param {string} text
+ */
+function isNodeLicense(text) {
+  return text.includes("Node.js is licensed for use as follows");
+}
+
+/**
+ * Copies every licence file under `sourceRoot` to the same relative path under
+ * `destinationRoot`.
+ *
+ * @param {string} sourceRoot
+ * @param {string} destinationRoot
+ * @param {string} [directory]
+ */
+function copyLicenseFiles(sourceRoot, destinationRoot, directory = sourceRoot) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const sourcePath = path.join(directory, entry.name);
+
+    if (entry.isDirectory()) {
+      copyLicenseFiles(sourceRoot, destinationRoot, sourcePath);
+      continue;
+    }
+
+    if (
+      !entry.isFile() ||
+      !licenseFilePattern.test(entry.name) ||
+      sourceFileExtensionPattern.test(entry.name)
+    ) {
+      continue;
+    }
+
+    const destinationPath = path.join(
+      destinationRoot,
+      path.relative(sourceRoot, sourcePath),
+    );
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+  }
 }
 
 function validatePreparedRuntime() {

@@ -103,5 +103,6 @@ jobs:
 
           gh release create $tag @artifacts `
             --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
             --title "Path Profile $version" `
             --generate-notes

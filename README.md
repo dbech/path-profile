@@ -2,6 +2,8 @@
 
 Path Profile is an Electron desktop app for loading DEM GeoTIFF rasters, drawing a path over the DEM, and generating an elevation profile along that path.
 
+The profile chart draws a line of sight between the two path ends and Fresnel zones 1 to 3 around it, each as a flat version and a version adjusted for earth curvature.
+
 ## Stack
 
 - Next.js 15 and React 19 for the renderer
@@ -128,6 +130,19 @@ bun run format:check
 6. Hover the profile chart or table to inspect the sampled map location.
 7. Use `File > Export Profile CSV` or the CSV button to export profile values.
 
+## Line of Sight and Fresnel Zones
+
+The profile chart overlays a line of sight from `A` to `B` on the terrain.
+
+- Each end starts at the terrain elevation there, or at the nearest sampled elevation along the path if the DEM has no data at that end. Drag the `A` and `B` handles, or type into the `A` and `B` boxes above the chart, to set antenna elevations.
+- The `F` box sets the radio frequency in MHz. It defaults to 5800.
+- Fresnel zones 1, 2 and 3 are drawn around the line of sight. Click a zone to mute it, and click again to restore it.
+- The solid Fresnel lines and the long-dashed line of sight treat the earth as flat.
+- The fainter dashed lines are the same overlays adjusted for earth curvature. They use an effective earth radius of 4/3 of 6,371 km, the standard atmosphere figure for radio paths. The adjustment lowers the line of sight by `d1 * d2 / (2 * k * R)` and leaves the terrain as sampled.
+- Overlays are hidden wherever the terrain blocks them or the DEM has no data, so a gap in a line marks an obstruction or missing terrain.
+- Fresnel zones and the curvature-adjusted overlays need a projected CRS with a linear unit, so the app can convert distances to metres. A DEM in a geographic CRS (degrees) shows the flat line of sight only.
+- If the DEM does not label its elevation unit, the app assumes metres and shows a warning.
+
 ## Notes
 
 - DEM tiles are served through Electron's `dsm-tile://` protocol in desktop mode.
@@ -139,3 +154,9 @@ bun run format:check
 - Some basemaps have provider caveats: OSM/Wikimedia public tiles are fair-use
   services, and Esri layers are public ArcGIS tile services.
 - Supported input is GeoTIFF DEM-like raster data.
+
+## Licence
+
+Path Profile's own source code is MIT licensed. See [LICENSE](LICENSE).
+
+Release builds also bundle third-party software under its own licences, including Electron and Chromium, Node.js, and `gdal-async` (Apache-2.0) with the GDAL, PROJ and GEOS libraries built into it. GEOS is LGPL-2.1. The MIT licence does not cover those components. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists the main ones, and the installer ships that file with the licence texts it points to.

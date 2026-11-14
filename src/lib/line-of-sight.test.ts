@@ -384,6 +384,48 @@ describe("line of sight helpers", () => {
     );
   });
 
+  it("adds interior samples to render sparse flat Fresnel boundaries as curves", () => {
+    const segments = buildVisibleFresnelZoneShellSegments(
+      [point(0, -10), point(10_000, -10)],
+      { startElevation: 10, endElevation: 10 },
+      5800,
+      1,
+    );
+    const upperMidpoint = segments.upper[0]?.find(
+      (sample) => sample.x === 5_000,
+    );
+    const lowerMidpoint = segments.lower[0]?.find(
+      (sample) => sample.x === 5_000,
+    );
+
+    expect(segments.upper).toHaveLength(1);
+    expect(segments.lower).toHaveLength(1);
+    expect(upperMidpoint?.y).toBeCloseTo(
+      10 + fresnelRadiusAt(5_000, 10_000, 5800, 1)!,
+      5,
+    );
+    expect(lowerMidpoint?.y).toBeCloseTo(
+      10 - fresnelRadiusAt(5_000, 10_000, 5800, 1)!,
+      5,
+    );
+  });
+
+  it("clips sparse flat Fresnel boundaries against terrain between samples", () => {
+    const segments = buildVisibleFresnelZoneShellSegments(
+      [point(0, 0), point(10_000, 0)],
+      { startElevation: 10, endElevation: 10 },
+      5800,
+      1,
+    );
+    const lowerMidpoint = segments.lower
+      .flat()
+      .find((sample) => sample.x === 5_000);
+
+    expect(segments.upper).toHaveLength(1);
+    expect(segments.lower).toHaveLength(2);
+    expect(lowerMidpoint).toBeUndefined();
+  });
+
   it("keeps Fresnel shell width on interior points of a visible stretch", () => {
     const segments = buildVisibleFresnelZoneShellSegments(
       [point(0, 0), point(10, 0), point(20, 0), point(30, 0)],
